@@ -35,6 +35,43 @@ struct RepoSidebarContentViewTests {
         #expect(status.linesDeleted == 0)
     }
 
+    @Test("branchStatus maps sync and line diff values from snapshot summary")
+    func branchStatusMapsSnapshotSyncAndLineDiff() {
+        let worktreeId = UUID()
+        let repoId = UUID()
+        let enrichment = WorktreeEnrichment(
+            worktreeId: worktreeId,
+            repoId: repoId,
+            branch: "main",
+            snapshot: GitWorkingTreeSnapshot(
+                worktreeId: worktreeId,
+                rootPath: URL(fileURLWithPath: "/tmp/repo-\(UUID().uuidString)"),
+                summary: GitWorkingTreeSummary(
+                    changed: 2,
+                    staged: 1,
+                    untracked: 0,
+                    linesAdded: 12,
+                    linesDeleted: 3,
+                    aheadCount: 1,
+                    behindCount: 0,
+                    hasUpstream: true
+                ),
+                branch: "main"
+            )
+        )
+
+        let status = RepoSidebarContentView.branchStatus(
+            enrichment: enrichment,
+            pullRequestCount: 1
+        )
+
+        #expect(status.isDirty)
+        #expect(status.linesAdded == 12)
+        #expect(status.linesDeleted == 3)
+        #expect(status.syncState == .ahead(1))
+        #expect(status.prCount == 1)
+    }
+
     @Test("branchStatus keeps unknown local state when snapshot missing")
     func branchStatusFallsBackToUnknownWithoutLocalSnapshot() {
         let status = RepoSidebarContentView.branchStatus(
@@ -216,5 +253,76 @@ struct RepoSidebarContentViewTests {
 
         #expect(groups.count == 1)
         #expect(groups.first?.id == "path:\(repo.repoPath.standardizedFileURL.path)")
+    }
+
+    @Test("branch label prefers enrichment branch over canonical fallback")
+    func branchLabelPrefersEnrichmentBranch() {
+        let worktree = Worktree(
+            name: "feature-a",
+            path: URL(fileURLWithPath: "/tmp/feature-a"),
+            branch: "",
+            isMainWorktree: false
+        )
+        let enrichment = WorktreeEnrichment(
+            worktreeId: worktree.id,
+            repoId: UUID(),
+            branch: "feature/fix-primary-sidebar",
+            snapshot: nil
+        )
+
+        let label = RepoSidebarContentView.resolvedBranchName(
+            worktree: worktree,
+            enrichment: enrichment
+        )
+
+        #expect(label == "feature/fix-primary-sidebar")
+    }
+
+    @Test("branch label falls back to detached head only when both sources are empty")
+    func branchLabelDetachedHeadFallback() {
+        let worktree = Worktree(
+            name: "unknown",
+            path: URL(fileURLWithPath: "/tmp/unknown"),
+            branch: "",
+            isMainWorktree: false
+        )
+
+        let label = RepoSidebarContentView.resolvedBranchName(
+            worktree: worktree,
+            enrichment: nil
+        )
+
+        #expect(label == "detached HEAD")
+    }
+
+    @Test("repo metadata builder uses resolved remote identity when available")
+    func repoMetadataBuilderUsesResolvedIdentity() {
+        let repo = SidebarRepo(
+            id: UUID(),
+            name: "agent-studio-local",
+            repoPath: URL(fileURLWithPath: "/tmp/agent-studio-local"),
+            stableKey: "agent-studio-local",
+            worktrees: [Worktree(name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio-local"), branch: "main")]
+        )
+
+        let metadata = RepoSidebarContentView.buildRepoMetadata(
+            repos: [repo],
+            repoEnrichmentByRepoId: [
+                repo.id: .resolved(
+                    repoId: repo.id,
+                    raw: RawRepoOrigin(origin: "git@github.com:askluna/agent-studio.git", upstream: nil),
+                    identity: RepoIdentity(
+                        groupKey: "remote:askluna/agent-studio",
+                        remoteSlug: "askluna/agent-studio",
+                        organizationName: "askluna",
+                        displayName: "agent-studio"
+                    ),
+                    updatedAt: Date()
+                )
+            ]
+        )
+
+        #expect(metadata[repo.id]?.groupKey == "remote:askluna/agent-studio")
+        #expect(metadata[repo.id]?.organizationName == "askluna")
     }
 }

@@ -60,8 +60,20 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
             let lines = result.stdout
                 .split(whereSeparator: \.isNewline)
                 .map(String.init)
-            let branch = parseBranch(lines: lines)
-            let summary = parseSummary(lines: lines)
+            let branchDetails = parseBranchDetails(lines: lines)
+            let branch = branchDetails.branch
+            let (linesAdded, linesDeleted) = await parseLineDiffCounts(
+                rootPath: rootPath,
+                processExecutor: processExecutor
+            )
+            let summary = parseSummary(
+                lines: lines,
+                linesAdded: linesAdded,
+                linesDeleted: linesDeleted,
+                aheadCount: branchDetails.aheadCount,
+                behindCount: branchDetails.behindCount,
+                hasUpstream: branchDetails.hasUpstream
+            )
             let origin = await parseOrigin(rootPath: rootPath, processExecutor: processExecutor)
             return GitWorkingTreeStatus(summary: summary, branch: branch, origin: origin)
         } catch let processError as ProcessError {
@@ -80,7 +92,14 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
         }
     }
 
-    nonisolated private static func parseSummary(lines: [String]) -> GitWorkingTreeSummary {
+    nonisolated private static func parseSummary(
+        lines: [String],
+        linesAdded: Int,
+        linesDeleted: Int,
+        aheadCount: Int?,
+        behindCount: Int?,
+        hasUpstream: Bool?
+    ) -> GitWorkingTreeSummary {
         var changed = 0
         var staged = 0
         var untracked = 0
@@ -104,23 +123,118 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
             }
         }
 
-        return GitWorkingTreeSummary(changed: changed, staged: staged, untracked: untracked)
+        return GitWorkingTreeSummary(
+            changed: changed,
+            staged: staged,
+            untracked: untracked,
+            linesAdded: linesAdded,
+            linesDeleted: linesDeleted,
+            aheadCount: aheadCount,
+            behindCount: behindCount,
+            hasUpstream: hasUpstream
+        )
     }
 
-    nonisolated private static func parseBranch(lines: [String]) -> String? {
+    private struct BranchDetails {
+        let branch: String?
+        let aheadCount: Int?
+        let behindCount: Int?
+        let hasUpstream: Bool?
+    }
+
+    nonisolated private static func parseBranchDetails(lines: [String]) -> BranchDetails {
         guard let branchLine = lines.first(where: { $0.hasPrefix("## ") }) else {
-            return nil
+            return BranchDetails(branch: nil, aheadCount: nil, behindCount: nil, hasUpstream: nil)
         }
         let raw = String(branchLine.dropFirst(3))
-        guard !raw.hasPrefix("HEAD") else { return nil }
+        guard !raw.hasPrefix("HEAD") else {
+            return BranchDetails(branch: nil, aheadCount: nil, behindCount: nil, hasUpstream: nil)
+        }
 
+        let hasUpstream = raw.contains("...")
+        var aheadCount: Int?
+        var behindCount: Int?
+        if let bracketStart = raw.firstIndex(of: "["),
+            let bracketEnd = raw[bracketStart...].firstIndex(of: "]"),
+            bracketEnd > bracketStart
+        {
+            let syncPayload = String(raw[raw.index(after: bracketStart)..<bracketEnd])
+            aheadCount = captureFirstInt(in: syncPayload, pattern: #"ahead (\d+)"#)
+            behindCount = captureFirstInt(in: syncPayload, pattern: #"behind (\d+)"#)
+            if aheadCount == nil && behindCount == nil && hasUpstream {
+                aheadCount = 0
+                behindCount = 0
+            }
+        } else if hasUpstream {
+            aheadCount = 0
+            behindCount = 0
+        }
+
+        let branch: String
         if let branchRange = raw.range(of: "...") {
-            return String(raw[..<branchRange.lowerBound])
+            branch = String(raw[..<branchRange.lowerBound])
+            return BranchDetails(
+                branch: branch,
+                aheadCount: aheadCount,
+                behindCount: behindCount,
+                hasUpstream: hasUpstream
+            )
         }
         if let suffixRange = raw.range(of: " ") {
-            return String(raw[..<suffixRange.lowerBound])
+            branch = String(raw[..<suffixRange.lowerBound])
+            return BranchDetails(
+                branch: branch,
+                aheadCount: aheadCount,
+                behindCount: behindCount,
+                hasUpstream: hasUpstream
+            )
         }
-        return raw
+        branch = raw
+        return BranchDetails(
+            branch: branch,
+            aheadCount: aheadCount,
+            behindCount: behindCount,
+            hasUpstream: hasUpstream
+        )
+    }
+
+    @concurrent
+    nonisolated private static func parseLineDiffCounts(
+        rootPath: URL,
+        processExecutor: any ProcessExecutor
+    ) async -> (Int, Int) {
+        do {
+            let result = try await processExecutor.execute(
+                command: "git",
+                args: [
+                    "-C", rootPath.path,
+                    "diff",
+                    "--shortstat",
+                    "HEAD",
+                    "--",
+                ],
+                cwd: nil,
+                environment: nil
+            )
+            guard result.succeeded else { return (0, 0) }
+            let shortstat = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !shortstat.isEmpty else { return (0, 0) }
+            let added = captureFirstInt(in: shortstat, pattern: #"(\d+) insertions?\(\+\)"#) ?? 0
+            let deleted = captureFirstInt(in: shortstat, pattern: #"(\d+) deletions?\(-\)"#) ?? 0
+            return (added, deleted)
+        } catch {
+            return (0, 0)
+        }
+    }
+
+    nonisolated private static func captureFirstInt(in text: String, pattern: String) -> Int? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range) else { return nil }
+        guard match.numberOfRanges > 1 else { return nil }
+        let valueRange = match.range(at: 1)
+        guard let swiftRange = Range(valueRange, in: text) else { return nil }
+        return Int(text[swiftRange])
     }
 
     @concurrent

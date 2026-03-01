@@ -23,10 +23,11 @@ struct RepoScanner {
         let fm = FileManager.default
         let gitDir = url.appending(path: ".git")
 
-        // If this directory has .git, it's a repo — don't descend further
-        var isDirectory: ObjCBool = false
-        if fm.fileExists(atPath: gitDir.path, isDirectory: &isDirectory) {
-            results.append(url)
+        // .git is always a hard boundary: classify this path, then stop.
+        if fm.fileExists(atPath: gitDir.path) {
+            if Self.isValidGitWorkingTree(url) {
+                results.append(url)
+            }
             return
         }
 
@@ -49,6 +50,47 @@ struct RepoScanner {
 
             scanDirectory(
                 item, currentDepth: currentDepth + 1, maxDepth: maxDepth, results: &results)
+        }
+    }
+
+    private static func isValidGitWorkingTree(_ url: URL) -> Bool {
+        guard let isWorkTree = runGit(url: url, args: ["rev-parse", "--is-inside-work-tree"]),
+            isWorkTree == "true"
+        else {
+            return false
+        }
+
+        // Submodule working trees are nested implementation details of a parent repo.
+        // They should not appear as standalone sidebar repos in folder scans.
+        if let superprojectRoot = runGit(url: url, args: ["rev-parse", "--show-superproject-working-tree"]),
+            !superprojectRoot.isEmpty
+        {
+            return false
+        }
+
+        return true
+    }
+
+    private static func runGit(url: URL, args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git", "-C", url.path] + args
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            return String(
+                data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+                encoding: .utf8
+            )?.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return nil
         }
     }
 }

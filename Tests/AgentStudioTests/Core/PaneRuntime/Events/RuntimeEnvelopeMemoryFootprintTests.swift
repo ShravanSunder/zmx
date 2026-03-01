@@ -36,8 +36,10 @@ struct RuntimeEnvelopeMemoryFootprintTests {
             )
         }
 
-        let filesChangedSmall = measureFootprint(label: "worktree.filesChanged.small(5 paths)", count: count) {
-            index in
+        let filesChangedSmall = measureFootprint(
+            label: "worktree.filesChanged.small(5 paths)",
+            count: count
+        ) { index in
             RuntimeEnvelope.worktree(
                 WorktreeEnvelope.test(
                     event: .filesystem(
@@ -59,8 +61,10 @@ struct RuntimeEnvelopeMemoryFootprintTests {
             )
         }
 
-        let filesChangedLarge = measureFootprint(label: "worktree.filesChanged.large(100 paths)", count: count) {
-            index in
+        let filesChangedLarge = measureFootprint(
+            label: "worktree.filesChanged.large(100 paths)",
+            count: count
+        ) { index in
             RuntimeEnvelope.worktree(
                 WorktreeEnvelope.test(
                     event: .filesystem(

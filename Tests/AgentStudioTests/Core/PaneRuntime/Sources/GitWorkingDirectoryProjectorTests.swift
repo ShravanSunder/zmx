@@ -671,8 +671,8 @@ struct GitWorkingDirectoryProjectorTests {
         }
         #expect(emittedLocalOriginEvent)
         let event = await observed.latestOriginEvent(for: repoId)
-        #expect(event?.0 == "")
-        #expect(event?.1 == "")
+        #expect(event?.0.isEmpty == true)
+        #expect(event?.1.isEmpty == true)
 
         await actor.shutdown()
         collectionTask.cancel()

@@ -11,43 +11,10 @@ struct PrimarySidebarPipelineIntegrationTests {
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
         let cacheStore = WorkspaceCacheStore()
-        let forgeActor = ForgeActor(
-            bus: bus,
-            statusProvider: .stub { _, branches in
-                var counts: [String: Int] = [:]
-                for branch in branches {
-                    counts[branch] = 1
-                }
-                return counts
-            },
-            providerName: "stub",
-            pollInterval: .seconds(60)
-        )
-        let coordinator = WorkspaceCacheCoordinator(
+        let (forgeActor, coordinator, projector) = makePipelineActors(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
-            scopeSyncHandler: { change in
-                switch change {
-                case .registerForgeRepo(let repoId, let remote):
-                    await forgeActor.register(repo: repoId, remote: remote)
-                case .unregisterForgeRepo(let repoId):
-                    await forgeActor.unregister(repo: repoId)
-                case .refreshForgeRepo(let repoId, let correlationId):
-                    await forgeActor.refresh(repo: repoId, correlationId: correlationId)
-                }
-            }
-        )
-        let projector = GitWorkingDirectoryProjector(
-            bus: bus,
-            gitWorkingTreeProvider: .stub { _ in
-                GitWorkingTreeStatus(
-                    summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
-                    branch: "main",
-                    origin: "git@github.com:askluna/agent-studio.git"
-                )
-            },
-            coalescingWindow: .zero
+            cacheStore: cacheStore
         )
 
         coordinator.startConsuming()
@@ -60,69 +27,11 @@ struct PrimarySidebarPipelineIntegrationTests {
         let worktreeA = UUID()
         let worktreeB = UUID()
 
-        _ = await bus.post(
-            .system(
-                SystemEnvelope.test(
-                    event: .topology(
-                        .worktreeRegistered(
-                            worktreeId: worktreeA,
-                            repoId: repoA.id,
-                            rootPath: URL(fileURLWithPath: "/tmp/pipeline-repo-a")
-                        )
-                    ),
-                    source: .builtin(.filesystemWatcher)
-                )
-            )
-        )
-        _ = await bus.post(
-            .system(
-                SystemEnvelope.test(
-                    event: .topology(
-                        .worktreeRegistered(
-                            worktreeId: worktreeB,
-                            repoId: repoB.id,
-                            rootPath: URL(fileURLWithPath: "/tmp/pipeline-repo-b")
-                        )
-                    ),
-                    source: .builtin(.filesystemWatcher)
-                )
-            )
-        )
+        await postWorktreeRegistered(bus: bus, worktreeId: worktreeA, repoId: repoA.id, rootPath: repoA.repoPath)
+        await postWorktreeRegistered(bus: bus, worktreeId: worktreeB, repoId: repoB.id, rootPath: repoB.repoPath)
 
-        _ = await bus.post(
-            .worktree(
-                WorktreeEnvelope.test(
-                    event: .gitWorkingDirectory(
-                        .branchChanged(
-                            worktreeId: worktreeA,
-                            repoId: repoA.id,
-                            from: "seed",
-                            to: "main"
-                        )
-                    ),
-                    repoId: repoA.id,
-                    worktreeId: worktreeA,
-                    source: .system(.builtin(.gitWorkingDirectoryProjector))
-                )
-            )
-        )
-        _ = await bus.post(
-            .worktree(
-                WorktreeEnvelope.test(
-                    event: .gitWorkingDirectory(
-                        .branchChanged(
-                            worktreeId: worktreeB,
-                            repoId: repoB.id,
-                            from: "seed",
-                            to: "main"
-                        )
-                    ),
-                    repoId: repoB.id,
-                    worktreeId: worktreeB,
-                    source: .system(.builtin(.gitWorkingDirectoryProjector))
-                )
-            )
-        )
+        await postBranchChanged(bus: bus, worktreeId: worktreeA, repoId: repoA.id, from: "seed", to: "main")
+        await postBranchChanged(bus: bus, worktreeId: worktreeB, repoId: repoB.id, from: "seed", to: "main")
 
         let identityConverged = await eventually("repo identity should resolve for both repos") {
             guard case .some(.resolved(_, _, let identityA, _)) = cacheStore.repoEnrichmentByRepoId[repoA.id] else {
@@ -188,12 +97,279 @@ struct PrimarySidebarPipelineIntegrationTests {
         #expect(identity.organizationName == "org-b")
     }
 
+    @Test("project-dev shape converges remote grouping and PR enrichment across sibling checkouts")
+    func projectDevShapeConvergesGroupingAndPullRequestCounts() async throws {
+        let tempRoot = try makeProjectDevShapeFixture()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let discoveredRepoPaths = RepoScanner().scanForGitRepos(in: tempRoot, maxDepth: 4)
+        let discoveredPathSet = Set(discoveredRepoPaths.map(canonicalPath(_:)))
+
+        #expect(discoveredPathSet.contains(canonicalPath(tempRoot.appending(path: "askluna-project/askluna-finance"))))
+        #expect(
+            discoveredPathSet.contains(
+                canonicalPath(tempRoot.appending(path: "-worktrees/askluna-finance/transaction-table-3"))
+            )
+        )
+        #expect(
+            discoveredPathSet.contains(
+                canonicalPath(tempRoot.appending(path: "-worktrees/askluna-finance/rlvr-forking"))
+            )
+        )
+        #expect(!discoveredPathSet.contains(canonicalPath(tempRoot.appending(path: "-worktrees"))))
+
+        let bus = EventBus<RuntimeEnvelope>()
+        let workspaceStore = makeWorkspaceStore()
+        let cacheStore = WorkspaceCacheStore()
+        let financeRemote = "git@github.com:askluna/askluna-finance.git"
+        let pathStatusByRootPath = makePathStatusByRootPath(
+            root: tempRoot,
+            financeRemote: financeRemote
+        )
+
+        let (forgeActor, coordinator, projector) = makePipelineActors(
+            bus: bus,
+            workspaceStore: workspaceStore,
+            cacheStore: cacheStore,
+            gitStatusByRootPath: pathStatusByRootPath
+        )
+
+        coordinator.startConsuming()
+        await projector.start()
+        await forgeActor.start()
+        defer {
+            coordinator.stopConsuming()
+        }
+
+        var financeWorktreeIdByBranch: [String: UUID] = [:]
+        var financeRepoIds: [UUID] = []
+        for repoPath in discoveredRepoPaths {
+            let repo = workspaceStore.addRepo(at: repoPath)
+            guard let worktree = repo.worktrees.first else { continue }
+            let normalizedPath = repoPath.standardizedFileURL.path
+            if pathStatusByRootPath[normalizedPath]?.origin == financeRemote {
+                financeRepoIds.append(repo.id)
+                if let branch = pathStatusByRootPath[normalizedPath]?.branch {
+                    financeWorktreeIdByBranch[branch] = worktree.id
+                }
+            }
+            await postWorktreeRegistered(bus: bus, worktreeId: worktree.id, repoId: repo.id, rootPath: repoPath)
+        }
+
+        let identityConverged = await eventually("all finance repos should share one remote group key") {
+            guard !financeRepoIds.isEmpty else { return false }
+            for repoId in financeRepoIds {
+                guard case .some(.resolved(_, _, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repoId] else {
+                    return false
+                }
+                guard identity.groupKey == "remote:askluna/askluna-finance" else { return false }
+            }
+            return true
+        }
+        #expect(identityConverged)
+
+        let pullRequestCountsConverged = await eventually("finance branches should receive forge PR counts") {
+            guard let primaryBranchId = financeWorktreeIdByBranch["master"],
+                let transactionTableId = financeWorktreeIdByBranch["transaction-table-3"],
+                let rlvrForkingId = financeWorktreeIdByBranch["rlvr-forking"]
+            else {
+                return false
+            }
+            return
+                cacheStore.pullRequestCountByWorktreeId[primaryBranchId] == 1
+                && cacheStore.pullRequestCountByWorktreeId[transactionTableId] == 2
+                && cacheStore.pullRequestCountByWorktreeId[rlvrForkingId] == 3
+        }
+        #expect(pullRequestCountsConverged)
+
+        let sidebarRepos = workspaceStore.repos.map(SidebarRepo.init(repo:))
+        let metadata = RepoSidebarContentView.buildRepoMetadata(
+            repos: sidebarRepos,
+            repoEnrichmentByRepoId: cacheStore.repoEnrichmentByRepoId
+        )
+        let groups = SidebarRepoGrouping.buildGroups(
+            repos: sidebarRepos,
+            metadataByRepoId: metadata
+        )
+        let financeGroup = groups.first { $0.id == "remote:askluna/askluna-finance" }
+        #expect(financeGroup != nil)
+        #expect((financeGroup?.repos.count ?? 0) >= 3)
+
+        await projector.shutdown()
+        await forgeActor.shutdown()
+    }
+
     private func makeWorkspaceStore() -> WorkspaceStore {
         let tempDir = FileManager.default.temporaryDirectory.appending(
             path: "primary-sidebar-pipeline-\(UUID().uuidString)")
         let persistor = WorkspacePersistor(workspacesDir: tempDir)
         persistor.ensureDirectory()
         return WorkspaceStore(persistor: persistor)
+    }
+
+    private func makePipelineActors(
+        bus: EventBus<RuntimeEnvelope>,
+        workspaceStore: WorkspaceStore,
+        cacheStore: WorkspaceCacheStore,
+        gitStatusByRootPath: [String: GitWorkingTreeStatus]? = nil
+    ) -> (ForgeActor, WorkspaceCacheCoordinator, GitWorkingDirectoryProjector) {
+        let forgeActor = ForgeActor(
+            bus: bus,
+            statusProvider: .stub { _, branches in
+                var counts: [String: Int] = [:]
+                for branch in branches {
+                    switch branch {
+                    case "master":
+                        counts[branch] = 1
+                    case "transaction-table-3":
+                        counts[branch] = 2
+                    case "rlvr-forking":
+                        counts[branch] = 3
+                    default:
+                        counts[branch] = 1
+                    }
+                }
+                return counts
+            },
+            providerName: "stub",
+            pollInterval: .seconds(60)
+        )
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: bus,
+            workspaceStore: workspaceStore,
+            cacheStore: cacheStore,
+            scopeSyncHandler: { change in
+                switch change {
+                case .registerForgeRepo(let repoId, let remote):
+                    await forgeActor.register(repo: repoId, remote: remote)
+                case .unregisterForgeRepo(let repoId):
+                    await forgeActor.unregister(repo: repoId)
+                case .refreshForgeRepo(let repoId, let correlationId):
+                    await forgeActor.refresh(repo: repoId, correlationId: correlationId)
+                }
+            }
+        )
+        let projector = GitWorkingDirectoryProjector(
+            bus: bus,
+            gitWorkingTreeProvider: .stub { rootPath in
+                if let gitStatusByRootPath {
+                    return gitStatusByRootPath[rootPath.standardizedFileURL.path]
+                }
+                return GitWorkingTreeStatus(
+                    summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
+                    branch: "main",
+                    origin: "git@github.com:askluna/agent-studio.git"
+                )
+            },
+            coalescingWindow: .zero
+        )
+
+        return (forgeActor, coordinator, projector)
+    }
+
+    private func makeProjectDevShapeFixture() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "project-dev-shape-\(UUID().uuidString)")
+
+        let repoPaths = [
+            "-worktrees/askluna-finance/transaction-table-3",
+            "-worktrees/askluna-finance/rlvr-forking",
+            "askluna-project/askluna-finance",
+            "askluna-project/askluna",
+        ]
+
+        for path in repoPaths {
+            try initializeGitRepository(at: root.appending(path: path))
+        }
+
+        return root
+    }
+
+    private func initializeGitRepository(at path: URL) throws {
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git", "-C", path.path, "init"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
+    private func canonicalPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    private func makePathStatusByRootPath(
+        root: URL,
+        financeRemote: String
+    ) -> [String: GitWorkingTreeStatus] {
+        func status(branch: String, origin: String) -> GitWorkingTreeStatus {
+            GitWorkingTreeStatus(
+                summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
+                branch: branch,
+                origin: origin
+            )
+        }
+
+        return [
+            root.appending(path: "-worktrees/askluna-finance/transaction-table-3").standardizedFileURL.path:
+                status(branch: "transaction-table-3", origin: financeRemote),
+            root.appending(path: "-worktrees/askluna-finance/rlvr-forking").standardizedFileURL.path:
+                status(branch: "rlvr-forking", origin: financeRemote),
+            root.appending(path: "askluna-project/askluna-finance").standardizedFileURL.path:
+                status(branch: "master", origin: financeRemote),
+            root.appending(path: "askluna-project/askluna").standardizedFileURL.path:
+                status(branch: "main", origin: "git@github.com:askluna/askluna.git"),
+        ]
+    }
+
+    private func postWorktreeRegistered(
+        bus: EventBus<RuntimeEnvelope>,
+        worktreeId: UUID,
+        repoId: UUID,
+        rootPath: URL
+    ) async {
+        _ = await bus.post(
+            .system(
+                SystemEnvelope.test(
+                    event: .topology(
+                        .worktreeRegistered(
+                            worktreeId: worktreeId,
+                            repoId: repoId,
+                            rootPath: rootPath
+                        )
+                    ),
+                    source: .builtin(.filesystemWatcher)
+                )
+            )
+        )
+    }
+
+    private func postBranchChanged(
+        bus: EventBus<RuntimeEnvelope>,
+        worktreeId: UUID,
+        repoId: UUID,
+        from: String,
+        to: String
+    ) async {
+        _ = await bus.post(
+            .worktree(
+                WorktreeEnvelope.test(
+                    event: .gitWorkingDirectory(
+                        .branchChanged(
+                            worktreeId: worktreeId,
+                            repoId: repoId,
+                            from: from,
+                            to: to
+                        )
+                    ),
+                    repoId: repoId,
+                    worktreeId: worktreeId,
+                    source: .system(.builtin(.gitWorkingDirectoryProjector))
+                )
+            )
+        )
     }
 
     private func eventually(

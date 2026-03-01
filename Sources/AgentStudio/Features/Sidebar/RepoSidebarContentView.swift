@@ -52,60 +52,10 @@ struct RepoSidebarContentView: View {
     }
 
     private var repoMetadataById: [UUID: RepoIdentityMetadata] {
-        var metadataByRepoId: [UUID: RepoIdentityMetadata] = [:]
-        metadataByRepoId.reserveCapacity(sidebarRepos.count)
-        for repo in sidebarRepos {
-            let enrichment = cacheStore.repoEnrichmentByRepoId[repo.id]
-            let normalizedRepoPath = repo.repoPath.standardizedFileURL.path
-
-            let groupKey: String
-            let displayName: String
-            let organizationName: String?
-            let originRemote: String?
-            let upstreamRemote: String?
-            let remoteSlug: String?
-
-            switch enrichment {
-            case .resolved(_, let raw, let identity, _):
-                groupKey = identity.groupKey
-                displayName = identity.displayName
-                organizationName = identity.organizationName
-                originRemote = raw.origin
-                upstreamRemote = raw.upstream
-                remoteSlug = identity.remoteSlug
-            case .unresolved:
-                groupKey = "pending:\(repo.id.uuidString)"
-                displayName = repo.name
-                organizationName = nil
-                originRemote = nil
-                upstreamRemote = nil
-                remoteSlug = nil
-            case nil:
-                groupKey = "path:\(normalizedRepoPath)"
-                displayName = repo.name
-                organizationName = nil
-                originRemote = nil
-                upstreamRemote = nil
-                remoteSlug = nil
-            }
-
-            metadataByRepoId[repo.id] = RepoIdentityMetadata(
-                groupKey: groupKey,
-                displayName: displayName,
-                repoName: displayName,
-                worktreeCommonDirectory: nil,
-                folderCwd: normalizedRepoPath,
-                parentFolder: repo.repoPath.deletingLastPathComponent().lastPathComponent,
-                organizationName: organizationName,
-                originRemote: originRemote,
-                upstreamRemote: upstreamRemote,
-                lastPathComponent: repo.repoPath.lastPathComponent,
-                worktreeCwds: repo.worktrees.map { $0.path.standardizedFileURL.path },
-                remoteFingerprint: originRemote,
-                remoteSlug: remoteSlug
-            )
-        }
-        return metadataByRepoId
+        Self.buildRepoMetadata(
+            repos: sidebarRepos,
+            repoEnrichmentByRepoId: cacheStore.repoEnrichmentByRepoId
+        )
     }
 
     private var groups: [SidebarRepoGroup] {
@@ -283,7 +233,7 @@ struct RepoSidebarContentView: View {
                                 SidebarWorktreeRow(
                                     worktree: worktree,
                                     checkoutTitle: checkoutTitle(for: worktree, in: repo),
-                                    branchName: worktree.branch.isEmpty ? "detached HEAD" : worktree.branch,
+                                    branchName: branchName(for: worktree),
                                     checkoutIconKind: checkoutIconKind(for: worktree, in: repo),
                                     iconColor: colorForCheckout(repo: repo, in: group),
                                     branchStatus: worktreeStatusById[worktree.id] ?? .unknown,
@@ -351,16 +301,14 @@ struct RepoSidebarContentView: View {
                 .contextMenu {
                     Divider()
 
-                    Button("Refresh Worktrees") {
-                        postAppEvent(.refreshWorktreesRequested)
+                    if let primaryRepo = Self.primaryRepoForGroup(group) {
+                        Button("Open in Finder") {
+                            openRepoInFinder(primaryRepo.repoPath)
+                        }
                     }
 
-                    Menu("Remove Checkout") {
-                        ForEach(group.repos) { repo in
-                            Button(repo.name, role: .destructive) {
-                                postAppEvent(.removeRepoRequested(repoId: repo.id))
-                            }
-                        }
+                    Button("Refresh Worktrees") {
+                        postAppEvent(.refreshWorktreesRequested)
                     }
                 }
             }
@@ -429,6 +377,13 @@ struct RepoSidebarContentView: View {
         return repo.worktrees.count > 1 ? .mainCheckout : .standaloneCheckout
     }
 
+    private func branchName(for worktree: Worktree) -> String {
+        Self.resolvedBranchName(
+            worktree: worktree,
+            enrichment: cacheStore.worktreeEnrichmentByWorktreeId[worktree.id]
+        )
+    }
+
     private func hideFilter() {
         filterText = ""
         debouncedQuery = ""
@@ -439,6 +394,10 @@ struct RepoSidebarContentView: View {
         uiStore.setFilterText("")
         uiStore.setFilterVisible(false)
         postAppEvent(.refocusTerminalRequested)
+    }
+
+    private func openRepoInFinder(_ path: URL) {
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path.path)
     }
 
 }
@@ -989,6 +948,110 @@ struct GitBranchStatus: Equatable, Sendable {
 }
 
 extension RepoSidebarContentView {
+    static func primaryRepoForGroup(_ group: SidebarRepoGroup) -> SidebarRepo? {
+        let sortedRepos = group.repos.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        guard !sortedRepos.isEmpty else { return nil }
+
+        return sortedRepos.max { lhs, rhs in
+            if primaryRepoScore(lhs) != primaryRepoScore(rhs) {
+                return primaryRepoScore(lhs) < primaryRepoScore(rhs)
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedDescending
+        }
+    }
+
+    private static func primaryRepoScore(_ repo: SidebarRepo) -> Int {
+        let normalizedRepoPath = repo.repoPath.standardizedFileURL.path
+        if repo.worktrees.contains(where: { $0.path.standardizedFileURL.path == normalizedRepoPath }) {
+            return 2
+        }
+        if repo.worktrees.contains(where: \.isMainWorktree) {
+            return 1
+        }
+        return 0
+    }
+
+    static func buildRepoMetadata(
+        repos: [SidebarRepo],
+        repoEnrichmentByRepoId: [UUID: RepoEnrichment]
+    ) -> [UUID: RepoIdentityMetadata] {
+        var metadataByRepoId: [UUID: RepoIdentityMetadata] = [:]
+        metadataByRepoId.reserveCapacity(repos.count)
+
+        for repo in repos {
+            let enrichment = repoEnrichmentByRepoId[repo.id]
+            let normalizedRepoPath = repo.repoPath.standardizedFileURL.path
+
+            let groupKey: String
+            let displayName: String
+            let organizationName: String?
+            let originRemote: String?
+            let upstreamRemote: String?
+            let remoteSlug: String?
+
+            switch enrichment {
+            case .resolved(_, let raw, let identity, _):
+                groupKey = identity.groupKey
+                displayName = identity.displayName
+                organizationName = identity.organizationName
+                originRemote = raw.origin
+                upstreamRemote = raw.upstream
+                remoteSlug = identity.remoteSlug
+            case .unresolved:
+                groupKey = "pending:\(repo.id.uuidString)"
+                displayName = repo.name
+                organizationName = nil
+                originRemote = nil
+                upstreamRemote = nil
+                remoteSlug = nil
+            case nil:
+                groupKey = "path:\(normalizedRepoPath)"
+                displayName = repo.name
+                organizationName = nil
+                originRemote = nil
+                upstreamRemote = nil
+                remoteSlug = nil
+            }
+
+            metadataByRepoId[repo.id] = RepoIdentityMetadata(
+                groupKey: groupKey,
+                displayName: displayName,
+                repoName: displayName,
+                worktreeCommonDirectory: nil,
+                folderCwd: normalizedRepoPath,
+                parentFolder: repo.repoPath.deletingLastPathComponent().lastPathComponent,
+                organizationName: organizationName,
+                originRemote: originRemote,
+                upstreamRemote: upstreamRemote,
+                lastPathComponent: repo.repoPath.lastPathComponent,
+                worktreeCwds: repo.worktrees.map { $0.path.standardizedFileURL.path },
+                remoteFingerprint: originRemote,
+                remoteSlug: remoteSlug
+            )
+        }
+
+        return metadataByRepoId
+    }
+
+    static func resolvedBranchName(
+        worktree: Worktree,
+        enrichment: WorktreeEnrichment?
+    ) -> String {
+        let cachedBranch = enrichment?.branch.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !cachedBranch.isEmpty {
+            return cachedBranch
+        }
+
+        let canonicalBranch = worktree.branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !canonicalBranch.isEmpty {
+            return canonicalBranch
+        }
+
+        return "detached HEAD"
+    }
+
     static func mergeBranchStatuses(
         worktreeEnrichmentsByWorktreeId: [UUID: WorktreeEnrichment],
         pullRequestCountsByWorktreeId: [UUID: Int]
@@ -1030,12 +1093,38 @@ extension RepoSidebarContentView {
         } else {
             isDirty = false
         }
+
+        let syncState: GitBranchStatus.SyncState
+        if let summary {
+            switch summary.hasUpstream {
+            case .some(false):
+                syncState = .noUpstream
+            case .some(true):
+                let ahead = summary.aheadCount ?? 0
+                let behind = summary.behindCount ?? 0
+                if ahead > 0 && behind > 0 {
+                    syncState = .diverged(ahead: ahead, behind: behind)
+                } else if ahead > 0 {
+                    syncState = .ahead(ahead)
+                } else if behind > 0 {
+                    syncState = .behind(behind)
+                } else if summary.aheadCount != nil || summary.behindCount != nil {
+                    syncState = .synced
+                } else {
+                    syncState = .unknown
+                }
+            case .none:
+                syncState = .unknown
+            }
+        } else {
+            syncState = .unknown
+        }
         return GitBranchStatus(
             isDirty: isDirty,
-            syncState: .unknown,
+            syncState: syncState,
             prCount: pullRequestCount,
-            linesAdded: 0,
-            linesDeleted: 0
+            linesAdded: summary?.linesAdded ?? 0,
+            linesDeleted: summary?.linesDeleted ?? 0
         )
     }
 }
