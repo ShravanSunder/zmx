@@ -1041,11 +1041,6 @@ extension RepoSidebarContentView {
             return cachedBranch
         }
 
-        let canonicalBranch = worktree.branch.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !canonicalBranch.isEmpty {
-            return canonicalBranch
-        }
-
         return "detached HEAD"
     }
 

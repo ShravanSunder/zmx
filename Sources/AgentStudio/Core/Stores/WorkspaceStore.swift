@@ -1214,14 +1214,15 @@ final class WorkspaceStore {
             return existing
         }
 
+        let repoId = UUID()
         let mainWorktree = Worktree(
+            repoId: repoId,
             name: normalizedPath.lastPathComponent,
             path: normalizedPath,
-            branch: "",
-            status: .idle,
             isMainWorktree: true
         )
         let repo = Repo(
+            id: repoId,
             name: normalizedPath.lastPathComponent,
             repoPath: normalizedPath,
             worktrees: [mainWorktree]
@@ -1315,41 +1316,32 @@ final class WorkspaceStore {
         // IDs on refresh would break active detection and lookups.
         let existingByPath = Dictionary(existing.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let existingMain = existing.first(where: \.isMainWorktree)
-        let existingByNameAndBranch = Dictionary(
-            existing.map { ("\($0.name)::\($0.branch)", $0) },
+        let existingByName = Dictionary(
+            existing.map { ($0.name, $0) },
             uniquingKeysWith: { first, _ in first }
         )
         let merged = worktrees.map { discovered -> Worktree in
             if let existing = existingByPath[discovered.path] {
-                // Preserve ID and agent; update name/branch/status from discovery
+                // Preserve ID; update name from discovery
                 var updated = existing
                 updated.name = discovered.name
-                updated.branch = discovered.branch
-                updated.status = discovered.status
                 return updated
             }
             if discovered.isMainWorktree, let existingMain {
-                var updated = discovered
-                updated = Worktree(
+                return Worktree(
                     id: existingMain.id,
+                    repoId: repoId,
                     name: discovered.name,
                     path: discovered.path,
-                    branch: discovered.branch,
-                    agent: existingMain.agent,
-                    status: discovered.status,
                     isMainWorktree: discovered.isMainWorktree
                 )
-                return updated
             }
-            let key = "\(discovered.name)::\(discovered.branch)"
-            if let existingByName = existingByNameAndBranch[key] {
+            if let matched = existingByName[discovered.name] {
                 return Worktree(
-                    id: existingByName.id,
+                    id: matched.id,
+                    repoId: repoId,
                     name: discovered.name,
                     path: discovered.path,
-                    branch: discovered.branch,
-                    agent: existingByName.agent,
-                    status: discovered.status,
                     isMainWorktree: discovered.isMainWorktree
                 )
             }
@@ -1722,10 +1714,9 @@ final class WorkspaceStore {
             let worktrees = (worktreesByRepoId[canonicalRepo.id] ?? []).map { canonicalWorktree in
                 Worktree(
                     id: canonicalWorktree.id,
+                    repoId: canonicalRepo.id,
                     name: canonicalWorktree.name,
                     path: canonicalWorktree.path,
-                    branch: "",
-                    status: .idle,
                     isMainWorktree: canonicalWorktree.isMainWorktree
                 )
             }

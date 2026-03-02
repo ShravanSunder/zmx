@@ -373,7 +373,7 @@ enum CommandBarDataSource {
                         CommandBarItem(
                             id: "target-worktree-\(worktree.id.uuidString)",
                             title: worktree.name,
-                            subtitle: "\(repo.name) · \(worktree.branch)",
+                            subtitle: repo.name,
                             icon: worktree.isMainWorktree ? "star.fill" : "arrow.triangle.branch",
                             group: "Worktrees",
                             groupPriority: 2 + repoIndex,
@@ -546,11 +546,11 @@ enum CommandBarDataSource {
                     CommandBarItem(
                         id: "repo-wt-\(worktree.id.uuidString)",
                         title: "\(prefix)\(worktree.name)",
-                        subtitle: worktree.branch,
+                        subtitle: worktree.name,
                         icon: worktree.isMainWorktree ? "star.fill" : "arrow.triangle.branch",
                         group: repo.name,
                         groupPriority: repoIndex,
-                        keywords: ["repo", "worktree", "branch", worktree.branch, repo.name, worktree.name],
+                        keywords: ["repo", "worktree", repo.name, worktree.name],
                         action: .dispatchTargeted(.openWorktree, target: worktree.id, targetType: .worktree),
                         command: .openWorktree
                     ))
@@ -567,12 +567,11 @@ enum CommandBarDataSource {
                 CommandBarItem(
                     id: "wt-\(worktree.id.uuidString)",
                     title: worktree.name,
-                    subtitle: "\(repo.name) · \(worktree.branch)",
+                    subtitle: repo.name,
                     icon: "arrow.triangle.branch",
-                    iconColor: worktree.agent?.color,
                     group: Group.worktrees,
                     groupPriority: Priority.worktrees,
-                    keywords: ["worktree", "branch", worktree.branch, repo.name],
+                    keywords: ["worktree", repo.name, worktree.name],
                     action: .dispatchTargeted(.openWorktree, target: worktree.id, targetType: .worktree),
                     command: .openWorktree
                 )
@@ -605,7 +604,7 @@ enum CommandBarDataSource {
             keywords.append("terminal")
         }
         if let worktreeId = pane.worktreeId, let wt = store.worktree(worktreeId) {
-            keywords.append(contentsOf: [wt.name, wt.branch])
+            keywords.append(wt.name)
         }
         if let agent = pane.agent {
             keywords.append(agent.displayName)

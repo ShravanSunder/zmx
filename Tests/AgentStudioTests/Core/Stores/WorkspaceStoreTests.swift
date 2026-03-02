@@ -755,7 +755,7 @@ final class WorkspaceStoreTests {
     func test_restore_prunesPanesWithMissingWorktree() {
         // Arrange — add a repo with a worktree, then create a worktree-bound pane
         let repo = store.addRepo(at: URL(fileURLWithPath: "/tmp/orphan-test-repo"))
-        let wt = makeWorktree(name: "main", path: "/tmp/orphan-test-repo", branch: "main")
+        let wt = makeWorktree(name: "main", path: "/tmp/orphan-test-repo")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [wt])
 
         let worktree = store.repos.first!.worktrees.first!
@@ -880,8 +880,8 @@ final class WorkspaceStoreTests {
     func test_updateRepoWorktrees_preservesExistingIds() {
         // Arrange — add repo then seed initial worktrees
         let repo = store.addRepo(at: URL(fileURLWithPath: "/tmp/wt-test-repo"))
-        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo/main", branch: "main")
-        let wt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo/feat", branch: "feat")
+        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo/main")
+        let wt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo/feat")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [wt1, wt2])
 
         let storedWt1Id = store.repos.first(where: { $0.id == repo.id })!.worktrees[0].id
@@ -891,8 +891,8 @@ final class WorkspaceStoreTests {
         let pane = store.createPane(source: .worktree(worktreeId: storedWt1Id, repoId: repo.id))
 
         // Act — simulate refresh with fresh Worktree instances (new UUIDs, same paths)
-        let freshWt1 = makeWorktree(name: "main-updated", path: "/tmp/wt-test-repo/main", branch: "main")
-        let freshWt2 = makeWorktree(name: "feat-updated", path: "/tmp/wt-test-repo/feat", branch: "feat")
+        let freshWt1 = makeWorktree(name: "main-updated", path: "/tmp/wt-test-repo/main")
+        let freshWt2 = makeWorktree(name: "feat-updated", path: "/tmp/wt-test-repo/feat")
         #expect(freshWt1.id != storedWt1Id, "precondition: fresh worktree has different UUID")
 
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [freshWt1, freshWt2])
@@ -915,13 +915,13 @@ final class WorkspaceStoreTests {
     func test_updateRepoWorktrees_addsNewWorktrees() {
         // Arrange
         let repo = store.addRepo(at: URL(fileURLWithPath: "/tmp/wt-test-repo2"))
-        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo2/main", branch: "main")
+        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo2/main")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [wt1])
         let storedWt1Id = store.repos.first(where: { $0.id == repo.id })!.worktrees[0].id
 
         // Act — refresh adds a new worktree
-        let freshWt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo2/main", branch: "main")
-        let newWt = makeWorktree(name: "hotfix", path: "/tmp/wt-test-repo2/hotfix", branch: "hotfix")
+        let freshWt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo2/main")
+        let newWt = makeWorktree(name: "hotfix", path: "/tmp/wt-test-repo2/hotfix")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [freshWt1, newWt])
 
         // Assert
@@ -936,13 +936,13 @@ final class WorkspaceStoreTests {
     func test_updateRepoWorktrees_removesDeletedWorktrees() {
         // Arrange
         let repo = store.addRepo(at: URL(fileURLWithPath: "/tmp/wt-test-repo3"))
-        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo3/main", branch: "main")
-        let wt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo3/feat", branch: "feat")
+        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo3/main")
+        let wt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo3/feat")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [wt1, wt2])
         let storedWt1Id = store.repos.first(where: { $0.id == repo.id })!.worktrees[0].id
 
         // Act — refresh returns only wt1 (wt2 was deleted)
-        let freshWt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo3/main", branch: "main")
+        let freshWt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo3/main")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [freshWt1])
 
         // Assert — only wt1 remains
@@ -956,14 +956,14 @@ final class WorkspaceStoreTests {
     func test_updateRepoWorktrees_noopWhenMergedResultUnchanged() {
         // Arrange
         let repo = store.addRepo(at: URL(fileURLWithPath: "/tmp/wt-test-repo4"))
-        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo4/main", branch: "main")
-        let wt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo4/feat", branch: "feat")
+        let wt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo4/main")
+        let wt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo4/feat")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [wt1, wt2])
         let before = store.repos.first(where: { $0.id == repo.id })!
 
         // Act — same effective data, but fresh worktree instances
-        let sameWt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo4/main", branch: "main")
-        let sameWt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo4/feat", branch: "feat")
+        let sameWt1 = makeWorktree(name: "main", path: "/tmp/wt-test-repo4/main")
+        let sameWt2 = makeWorktree(name: "feat", path: "/tmp/wt-test-repo4/feat")
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [sameWt1, sameWt2])
         let after = store.repos.first(where: { $0.id == repo.id })!
 

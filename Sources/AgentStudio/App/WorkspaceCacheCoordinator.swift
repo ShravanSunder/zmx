@@ -102,10 +102,9 @@ final class WorkspaceCacheCoordinator {
                 worktrees.append(
                     Worktree(
                         id: worktreeId,
+                        repoId: repoId,
                         name: rootPath.lastPathComponent,
                         path: rootPath,
-                        branch: "",
-                        status: .idle,
                         isMainWorktree: false
                     )
                 )

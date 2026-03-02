@@ -147,14 +147,14 @@ struct RepoSidebarContentViewTests {
             name: "agent-studio-a",
             repoPath: URL(fileURLWithPath: "/tmp/agent-studio-a"),
             stableKey: "a",
-            worktrees: [Worktree(name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio-a"), branch: "main")]
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio-a"))]
         )
         let secondRepo = SidebarRepo(
             id: UUID(),
             name: "agent-studio-b",
             repoPath: URL(fileURLWithPath: "/tmp/agent-studio-b"),
             stableKey: "b",
-            worktrees: [Worktree(name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio-b"), branch: "main")]
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio-b"))]
         )
         let metadataByRepoId: [UUID: RepoIdentityMetadata] = [
             firstRepo.id: RepoIdentityMetadata(
@@ -206,7 +206,7 @@ struct RepoSidebarContentViewTests {
             name: "pending-repo",
             repoPath: URL(fileURLWithPath: "/tmp/pending-repo"),
             stableKey: "pending",
-            worktrees: [Worktree(name: "main", path: URL(fileURLWithPath: "/tmp/pending-repo"), branch: "main")]
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/pending-repo"))]
         )
         let metadataByRepoId: [UUID: RepoIdentityMetadata] = [
             repo.id: RepoIdentityMetadata(
@@ -243,7 +243,7 @@ struct RepoSidebarContentViewTests {
             name: "path-repo",
             repoPath: URL(fileURLWithPath: "/tmp/path-repo"),
             stableKey: "path",
-            worktrees: [Worktree(name: "main", path: URL(fileURLWithPath: "/tmp/path-repo"), branch: "main")]
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/path-repo"))]
         )
 
         let groups = SidebarRepoGrouping.buildGroups(
@@ -258,9 +258,9 @@ struct RepoSidebarContentViewTests {
     @Test("branch label prefers enrichment branch over canonical fallback")
     func branchLabelPrefersEnrichmentBranch() {
         let worktree = Worktree(
+            repoId: UUID(),
             name: "feature-a",
             path: URL(fileURLWithPath: "/tmp/feature-a"),
-            branch: "",
             isMainWorktree: false
         )
         let enrichment = WorktreeEnrichment(
@@ -281,9 +281,9 @@ struct RepoSidebarContentViewTests {
     @Test("branch label falls back to detached head only when both sources are empty")
     func branchLabelDetachedHeadFallback() {
         let worktree = Worktree(
+            repoId: UUID(),
             name: "unknown",
             path: URL(fileURLWithPath: "/tmp/unknown"),
-            branch: "",
             isMainWorktree: false
         )
 
@@ -302,7 +302,7 @@ struct RepoSidebarContentViewTests {
             name: "agent-studio-local",
             repoPath: URL(fileURLWithPath: "/tmp/agent-studio-local"),
             stableKey: "agent-studio-local",
-            worktrees: [Worktree(name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio-local"), branch: "main")]
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio-local"))]
         )
 
         let metadata = RepoSidebarContentView.buildRepoMetadata(
@@ -335,9 +335,9 @@ struct RepoSidebarContentViewTests {
             stableKey: "a",
             worktrees: [
                 Worktree(
+                    repoId: UUID(),
                     name: "rlvr-forking",
-                    path: URL(fileURLWithPath: "/tmp/askluna-finance-rlvr-forking"),
-                    branch: "rlvr-forking"
+                    path: URL(fileURLWithPath: "/tmp/askluna-finance-rlvr-forking")
                 )
             ]
         )
@@ -348,8 +348,9 @@ struct RepoSidebarContentViewTests {
             stableKey: "b",
             worktrees: [
                 Worktree(
-                    name: "transaction-table-3", path: URL(fileURLWithPath: "/tmp/transaction-table-3"),
-                    branch: "transaction-table-3")
+                    repoId: UUID(),
+                    name: "transaction-table-3", path: URL(fileURLWithPath: "/tmp/transaction-table-3")
+                )
             ]
         )
         let group = SidebarRepoGroup(
@@ -370,14 +371,14 @@ struct RepoSidebarContentViewTests {
             name: "b-repo",
             repoPath: URL(fileURLWithPath: "/tmp/b-repo"),
             stableKey: "b",
-            worktrees: [Worktree(name: "feat-b", path: URL(fileURLWithPath: "/tmp/feat-b"), branch: "feat-b")]
+            worktrees: [Worktree(repoId: UUID(), name: "feat-b", path: URL(fileURLWithPath: "/tmp/feat-b"))]
         )
         let repoB = SidebarRepo(
             id: UUID(),
             name: "a-repo",
             repoPath: URL(fileURLWithPath: "/tmp/a-repo"),
             stableKey: "a",
-            worktrees: [Worktree(name: "feat-a", path: URL(fileURLWithPath: "/tmp/feat-a"), branch: "feat-a")]
+            worktrees: [Worktree(repoId: UUID(), name: "feat-a", path: URL(fileURLWithPath: "/tmp/feat-a"))]
         )
         let group = SidebarRepoGroup(
             id: "remote:org/repo",

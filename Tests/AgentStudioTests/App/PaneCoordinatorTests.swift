@@ -316,9 +316,9 @@ struct PaneCoordinatorTests {
             return
         }
         let secondaryWorktree = Worktree(
+            repoId: repo.id,
             name: "feature-a",
-            path: repo.repoPath.appending(path: "feature-a"),
-            branch: "feature-a"
+            path: repo.repoPath.appending(path: "feature-a")
         )
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [primaryWorktree, secondaryWorktree])
 
@@ -358,9 +358,9 @@ struct PaneCoordinatorTests {
         }
 
         let tertiaryWorktree = Worktree(
+            repoId: repo.id,
             name: "feature-b",
-            path: repo.repoPath.appending(path: "feature-b"),
-            branch: "feature-b"
+            path: repo.repoPath.appending(path: "feature-b")
         )
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [primaryWorktree, tertiaryWorktree])
         await paneEventBus.post(
@@ -464,9 +464,9 @@ struct PaneCoordinatorTests {
             return
         }
         let staleWorktree = Worktree(
+            repoId: repo.id,
             name: "stale-branch",
-            path: repo.repoPath.appending(path: "stale-branch"),
-            branch: "stale-branch"
+            path: repo.repoPath.appending(path: "stale-branch")
         )
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [mainWorktree, staleWorktree])
 
@@ -498,9 +498,9 @@ struct PaneCoordinatorTests {
 
         // Trigger a second desired state while the initial sync pass is still executing.
         let latestWorktree = Worktree(
+            repoId: repo.id,
             name: "latest-branch",
-            path: repo.repoPath.appending(path: "latest-branch"),
-            branch: "latest-branch"
+            path: repo.repoPath.appending(path: "latest-branch")
         )
         store.reconcileDiscoveredWorktrees(repo.id, worktrees: [mainWorktree, latestWorktree])
         await paneEventBus.post(

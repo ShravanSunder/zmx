@@ -353,15 +353,15 @@ struct CommandBarDataSourceTests {
             repo.id,
             worktrees: [
                 Worktree(
+                    repoId: repo.id,
                     name: "main",
                     path: URL(filePath: "/tmp/test-repo"),
-                    branch: "main",
                     isMainWorktree: true
                 ),
                 Worktree(
+                    repoId: repo.id,
                     name: "feat-branch",
                     path: URL(filePath: "/tmp/test-repo-feat"),
-                    branch: "feat/branch",
                     isMainWorktree: false
                 ),
             ])

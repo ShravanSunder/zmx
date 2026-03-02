@@ -28,9 +28,9 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let repoPath = URL(fileURLWithPath: "/tmp/repo-move-test")
         let repo = workspaceStore.addRepo(at: repoPath)
         let mainWorktree = Worktree(
+            repoId: repo.id,
             name: "main",
             path: repoPath,
-            branch: "main",
             isMainWorktree: true
         )
         workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: [mainWorktree])
@@ -94,9 +94,9 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let oldRepoPath = URL(fileURLWithPath: "/tmp/repo-move-old")
         let repo = workspaceStore.addRepo(at: oldRepoPath)
         let oldWorktree = Worktree(
+            repoId: repo.id,
             name: "main",
             path: oldRepoPath,
-            branch: "main",
             isMainWorktree: true
         )
         workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: [oldWorktree])
@@ -116,9 +116,9 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
 
         let relocatedPath = URL(fileURLWithPath: "/tmp/repo-move-new")
         let discoveredAtNewPath = Worktree(
+            repoId: repo.id,
             name: "main",
             path: relocatedPath,
-            branch: "main",
             isMainWorktree: true
         )
 
@@ -151,9 +151,9 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let repoPath = URL(fileURLWithPath: "/tmp/repo-rediscovery")
         let repo = workspaceStore.addRepo(at: repoPath)
         let worktree = Worktree(
+            repoId: repo.id,
             name: "main",
             path: repoPath,
-            branch: "main",
             isMainWorktree: true
         )
         workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: [worktree])
@@ -194,9 +194,9 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let oldRepoPath = URL(fileURLWithPath: "/tmp/repo-move-backgrounded-old")
         let repo = workspaceStore.addRepo(at: oldRepoPath)
         let oldWorktree = Worktree(
+            repoId: repo.id,
             name: "main",
             path: oldRepoPath,
-            branch: "main",
             isMainWorktree: true
         )
         workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: [oldWorktree])
@@ -219,9 +219,9 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
 
         let relocatedPath = URL(fileURLWithPath: "/tmp/repo-move-backgrounded-new")
         let discoveredAtNewPath = Worktree(
+            repoId: repo.id,
             name: "main",
             path: relocatedPath,
-            branch: "main",
             isMainWorktree: true
         )
         let reassociated = coordinator.reassociateRepo(
@@ -248,9 +248,9 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let repoPath = URL(fileURLWithPath: "/tmp/repo-remove-pending-undo")
         let repo = workspaceStore.addRepo(at: repoPath)
         let worktree = Worktree(
+            repoId: repo.id,
             name: "main",
             path: repoPath,
-            branch: "main",
             isMainWorktree: true
         )
         workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: [worktree])

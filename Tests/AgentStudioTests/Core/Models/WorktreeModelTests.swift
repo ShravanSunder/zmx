@@ -6,43 +6,6 @@ import Testing
 @Suite(.serialized)
 final class WorktreeModelTests {
 
-    // MARK: - WorktreeStatus displayName
-
-    @Test
-
-    func test_worktreeStatus_displayName_idle() {
-        // Assert
-        #expect(WorktreeStatus.idle.displayName == "Idle")
-    }
-
-    @Test
-
-    func test_worktreeStatus_displayName_running() {
-        // Assert
-        #expect(WorktreeStatus.running.displayName == "Running")
-    }
-
-    @Test
-
-    func test_worktreeStatus_displayName_pendingReview() {
-        // Assert
-        #expect(WorktreeStatus.pendingReview.displayName == "Pending Review")
-    }
-
-    @Test
-
-    func test_worktreeStatus_displayName_error() {
-        // Assert
-        #expect(WorktreeStatus.error.displayName == "Error")
-    }
-
-    @Test
-
-    func test_worktreeStatus_caseIterable_hasFourCases() {
-        // Assert
-        #expect(WorktreeStatus.allCases.count == 4)
-    }
-
     // MARK: - AgentType Properties
 
     @Test
@@ -100,10 +63,7 @@ final class WorktreeModelTests {
     func test_worktree_codable_roundTrip() throws {
         // Arrange
         let original = makeWorktree(
-            name: "feature-x",
-            branch: "feature-x",
-            agent: .claude,
-            status: .running
+            name: "feature-x"
         )
 
         // Act
@@ -113,23 +73,25 @@ final class WorktreeModelTests {
         // Assert
         #expect(decoded.id == original.id)
         #expect(decoded.name == original.name)
-        #expect(decoded.branch == original.branch)
-        #expect(decoded.agent == .claude)
-        #expect(decoded.status == .running)
+        #expect(decoded.repoId == original.repoId)
     }
 
     @Test
 
-    func test_worktree_codable_nilOptionals_roundTrip() throws {
+    func test_worktree_codable_defaultValues_roundTrip() throws {
         // Arrange
-        let original = makeWorktree(agent: nil)
+        let original = makeWorktree()
 
         // Act
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(Worktree.self, from: data)
 
         // Assert
-        #expect((decoded.agent) == nil)
+        #expect(decoded.id == original.id)
+        #expect(decoded.repoId == original.repoId)
+        #expect(decoded.name == original.name)
+        #expect(decoded.path == original.path)
+        #expect(decoded.isMainWorktree == original.isMainWorktree)
     }
 
     // MARK: - Worktree Hashable
@@ -152,10 +114,9 @@ final class WorktreeModelTests {
 
     func test_worktree_init_defaults() {
         // Act
-        let wt = Worktree(name: "test", path: URL(fileURLWithPath: "/tmp/test"), branch: "main")
+        let wt = Worktree(repoId: UUID(), name: "test", path: URL(fileURLWithPath: "/tmp/test"))
 
         // Assert
-        #expect((wt.agent) == nil)
-        #expect(wt.status == .idle)
+        #expect(wt.isMainWorktree == false)
     }
 }

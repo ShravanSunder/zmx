@@ -366,7 +366,7 @@ final class WorkspaceCacheCoordinatorTests {
 
         let repoPath = URL(fileURLWithPath: "/tmp/luna-scope-repo")
         let repo = workspaceStore.addRepo(at: repoPath)
-        let worktree = Worktree(name: "main", path: repoPath, branch: "main", isMainWorktree: true)
+        let worktree = Worktree(repoId: repo.id, name: "main", path: repoPath, isMainWorktree: true)
         workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: [worktree])
 
         coordinator.handleEnrichment(

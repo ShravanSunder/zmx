@@ -6,20 +6,16 @@ import Foundation
 
 func makeWorktree(
     id: UUID = UUID(),
+    repoId: UUID = UUID(),
     name: String = "feature-branch",
     path: String = "/tmp/test-repo/feature-branch",
-    branch: String = "feature-branch",
-    agent: AgentType? = nil,
-    status: WorktreeStatus = .idle,
     isMainWorktree: Bool = false
 ) -> Worktree {
     Worktree(
         id: id,
+        repoId: repoId,
         name: name,
         path: URL(fileURLWithPath: path),
-        branch: branch,
-        agent: agent,
-        status: status,
         isMainWorktree: isMainWorktree
     )
 }

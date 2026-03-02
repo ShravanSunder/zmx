@@ -21,9 +21,9 @@ extension E2ESerializedTests {
 
             let repo = store.addRepo(at: repoURL)
             let worktree = Worktree(
+                repoId: repo.id,
                 name: "main",
                 path: repoURL,
-                branch: "main",
                 isMainWorktree: true
             )
             store.reconcileDiscoveredWorktrees(repo.id, worktrees: [worktree])
