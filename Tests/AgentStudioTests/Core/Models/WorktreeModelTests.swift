@@ -44,6 +44,36 @@ final class WorktreeModelTests {
         #expect(decoded.isMainWorktree == original.isMainWorktree)
     }
 
+    // MARK: - Strict Decode
+
+    @Test
+    func decode_missingRepoId_throws() throws {
+        // Arrange — JSON with no repoId key
+        let json = """
+            {"id":"11111111-1111-1111-1111-111111111111","name":"main","path":"/tmp/repo","isMainWorktree":true}
+            """
+        let data = Data(json.utf8)
+
+        // Act & Assert — decoder must reject missing repoId
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(Worktree.self, from: data)
+        }
+    }
+
+    @Test
+    func decode_missingIsMainWorktree_throws() throws {
+        // Arrange — JSON with no isMainWorktree key
+        let json = """
+            {"id":"11111111-1111-1111-1111-111111111111","repoId":"22222222-2222-2222-2222-222222222222","name":"main","path":"/tmp/repo"}
+            """
+        let data = Data(json.utf8)
+
+        // Act & Assert — decoder must reject missing isMainWorktree
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(Worktree.self, from: data)
+        }
+    }
+
     // MARK: - Worktree Hashable
 
     @Test

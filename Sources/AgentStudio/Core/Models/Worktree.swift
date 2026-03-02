@@ -30,9 +30,9 @@ struct Worktree: Codable, Identifiable, Hashable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(UUID.self, forKey: .id)
-        self.repoId = try container.decodeIfPresent(UUID.self, forKey: .repoId) ?? UUID()
+        self.repoId = try container.decode(UUID.self, forKey: .repoId)
         self.name = try container.decode(String.self, forKey: .name)
         self.path = try container.decode(URL.self, forKey: .path)
-        self.isMainWorktree = try container.decodeIfPresent(Bool.self, forKey: .isMainWorktree) ?? false
+        self.isMainWorktree = try container.decode(Bool.self, forKey: .isMainWorktree)
     }
 }
