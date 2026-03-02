@@ -216,13 +216,28 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
                 cwd: nil,
                 environment: nil
             )
-            guard result.succeeded else { return (0, 0) }
+            guard result.succeeded else {
+                let stderrPreview = result.stderr.isEmpty ? "<empty>" : result.stderr
+                let stdoutPreview = result.stdout.isEmpty ? "<empty>" : result.stdout
+                Self.logger.debug(
+                    """
+                    git diff --shortstat failed for \(rootPath.path, privacy: .public) \
+                    exitCode=\(result.exitCode, privacy: .public) \
+                    stderr=\(stderrPreview, privacy: .public) \
+                    stdout=\(stdoutPreview, privacy: .public)
+                    """
+                )
+                return (0, 0)
+            }
             let shortstat = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !shortstat.isEmpty else { return (0, 0) }
             let added = captureFirstInt(in: shortstat, pattern: #"(\d+) insertions?\(\+\)"#) ?? 0
             let deleted = captureFirstInt(in: shortstat, pattern: #"(\d+) deletions?\(-\)"#) ?? 0
             return (added, deleted)
         } catch {
+            Self.logger.debug(
+                "git diff --shortstat failed for \(rootPath.path, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
             return (0, 0)
         }
     }
@@ -256,33 +271,37 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
             )
 
             guard result.succeeded else {
+                // git config exits 1 when key is missing (expected: no origin remote configured)
+                // or when config lookup fails; keep both observable for diagnostics.
+                if result.exitCode == 1 {
+                    let stderrPreview = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !stderrPreview.isEmpty {
+                        Self.logger.debug(
+                            "git origin lookup returned exit 1 for \(rootPath.path, privacy: .public): \(stderrPreview, privacy: .public)"
+                        )
+                    }
+                } else {
+                    let stderrPreview = result.stderr.isEmpty ? "<empty>" : result.stderr
+                    let stdoutPreview = result.stdout.isEmpty ? "<empty>" : result.stdout
+                    Self.logger.warning(
+                        """
+                        git config --get remote.origin.url failed for \(rootPath.path, privacy: .public) \
+                        exitCode=\(result.exitCode, privacy: .public) \
+                        stderr=\(stderrPreview, privacy: .public) \
+                        stdout=\(stdoutPreview, privacy: .public)
+                        """
+                    )
+                }
                 return nil
             }
 
             let origin = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             return origin.isEmpty ? nil : origin
         } catch {
+            Self.logger.warning(
+                "git origin lookup failed for \(rootPath.path, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
             return nil
         }
-    }
-}
-
-struct StubGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
-    let handler: @Sendable (URL) async -> GitWorkingTreeStatus?
-
-    init(handler: @escaping @Sendable (URL) async -> GitWorkingTreeStatus? = { _ in nil }) {
-        self.handler = handler
-    }
-
-    func status(for rootPath: URL) async -> GitWorkingTreeStatus? {
-        await handler(rootPath)
-    }
-}
-
-extension GitWorkingTreeStatusProvider where Self == StubGitWorkingTreeStatusProvider {
-    static func stub(
-        _ handler: @escaping @Sendable (URL) async -> GitWorkingTreeStatus? = { _ in nil }
-    ) -> StubGitWorkingTreeStatusProvider {
-        StubGitWorkingTreeStatusProvider(handler: handler)
     }
 }

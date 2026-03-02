@@ -1366,7 +1366,8 @@ final class WorkspaceStore {
 
     func restore() {
         persistor.ensureDirectory()
-        if let state = persistor.load() {
+        switch persistor.load() {
+        case .loaded(let state):
             workspaceId = state.id
             workspaceName = state.name
             repos = Self.runtimeRepos(
@@ -1384,9 +1385,10 @@ final class WorkspaceStore {
             updatedAt = state.updatedAt
             storeLogger.info(
                 "Restored workspace '\(state.name)' with \(state.panes.count) pane(s), \(state.tabs.count) tab(s)")
-        } else if persistor.hasWorkspaceFiles() {
-            storeLogger.error("Workspace files exist on disk but failed to load — starting with empty state.")
-        } else {
+        case .corrupt(let error):
+            storeLogger.error(
+                "Workspace file exists but failed to decode — starting with empty state: \(error)")
+        case .missing:
             storeLogger.info("No workspace files found — first launch")
         }
 

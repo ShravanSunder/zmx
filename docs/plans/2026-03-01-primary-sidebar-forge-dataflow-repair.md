@@ -952,7 +952,50 @@ git commit -m "docs(architecture): sync primary sidebar identity and forge dataf
 
 ---
 
-## Task 8: Full Verification Gate
+## Task 8: Commit-Without-Push Chip Refresh Reliability
+
+**Goal:** Ensure sync/status chips update for normal local/remote divergence states without manual refresh.
+
+**Files:**
+- Modify: `Sources/AgentStudio/Core/PaneRuntime/Sources/GitWorkingDirectoryProjector.swift`
+- Modify: `Sources/AgentStudio/App/WorkspaceCacheCoordinator.swift`
+- Modify: `Tests/AgentStudioTests/App/PrimarySidebarPipelineIntegrationTests.swift`
+- Add: `Tests/AgentStudioTests/Integration/CommitWithoutPushChipRefreshIntegrationTests.swift`
+
+**Step 1: Root-cause and trigger mapping**
+- Trace which events are emitted after local `git commit` with no push.
+- Verify at least one of these paths produces an update:
+  - `.git/HEAD` / `.git/index` / `.git/config` filesystem trigger
+  - projector-triggered recompute pipeline
+  - explicit refresh command path
+- Add diagnostics if any event is dropped in the projector → coordinator chain.
+
+**Step 2: Enforce non-push refresh contract**
+- Ensure local commit transitions update `GitWorkingTreeSummary` and branch sync state.
+- Ensure cache writes are applied only on value change but never skipped when values change.
+- Ensure chips recompute from cache values only (no sidebar shelling or imperative fallback).
+
+**Step 3: Add integration tests for divergence states**
+- Create temp repo fixture:
+  - make remote + local clone
+  - scenario A: local commit without push (`ahead > 0`, `behind == 0`)
+  - scenario B: remote advances without local pull (`ahead == 0`, `behind > 0`)
+  - verify pipeline converges to updated chip values for both directions
+- Verify no manual app refresh call is required.
+
+**Step 4: Commit**
+
+```bash
+git add Sources/AgentStudio/Core/PaneRuntime/Sources/GitWorkingDirectoryProjector.swift \
+  Sources/AgentStudio/App/WorkspaceCacheCoordinator.swift \
+  Tests/AgentStudioTests/App/PrimarySidebarPipelineIntegrationTests.swift \
+  Tests/AgentStudioTests/Integration/CommitWithoutPushChipRefreshIntegrationTests.swift
+git commit -m "fix(sidebar): refresh git chips after local commit without push"
+```
+
+---
+
+## Task 9: Full Verification Gate
 
 **Files:** No code changes (verification only)
 
@@ -998,6 +1041,7 @@ Expected: exit 0.
 - [ ] PR count mapping filters by `repoId` — no cross-repo branch contamination.
 - [ ] `Primary` sidebar grouping uses `identity.groupKey` from resolved enrichment.
 - [ ] Add Folder flow converges to resolved enrichment without manual refresh.
+- [ ] Sync chip updates automatically for both `ahead` and `behind` cases through the event pipeline (no manual refresh).
 - [ ] `WorktreeEnrichment` is unchanged (no unnecessary type changes).
 - [ ] Full `mise run test` and `mise run lint` pass.
 - [ ] Architecture docs match actual runtime behavior.

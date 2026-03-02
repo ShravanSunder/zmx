@@ -325,4 +325,68 @@ struct RepoSidebarContentViewTests {
         #expect(metadata[repo.id]?.groupKey == "remote:askluna/agent-studio")
         #expect(metadata[repo.id]?.organizationName == "askluna")
     }
+
+    @Test("primaryRepoForGroup prefers repo whose repoPath matches one of its worktrees")
+    func primaryRepoForGroupPrefersRepoPathMatch() {
+        let repoA = SidebarRepo(
+            id: UUID(),
+            name: "askluna-finance-rlvr-forking",
+            repoPath: URL(fileURLWithPath: "/tmp/askluna-finance-rlvr-forking"),
+            stableKey: "a",
+            worktrees: [
+                Worktree(
+                    name: "rlvr-forking",
+                    path: URL(fileURLWithPath: "/tmp/askluna-finance-rlvr-forking"),
+                    branch: "rlvr-forking"
+                )
+            ]
+        )
+        let repoB = SidebarRepo(
+            id: UUID(),
+            name: "askluna-finance",
+            repoPath: URL(fileURLWithPath: "/tmp/askluna-finance"),
+            stableKey: "b",
+            worktrees: [
+                Worktree(
+                    name: "transaction-table-3", path: URL(fileURLWithPath: "/tmp/transaction-table-3"),
+                    branch: "transaction-table-3")
+            ]
+        )
+        let group = SidebarRepoGroup(
+            id: "remote:askluna/askluna-finance",
+            repoTitle: "askluna-finance",
+            organizationName: "askluna",
+            repos: [repoA, repoB]
+        )
+
+        let primaryRepo = RepoSidebarContentView.primaryRepoForGroup(group)
+        #expect(primaryRepo?.id == repoA.id)
+    }
+
+    @Test("primaryRepoForGroup falls back deterministically when no repo has a main-path match")
+    func primaryRepoForGroupFallsBackDeterministically() {
+        let repoA = SidebarRepo(
+            id: UUID(),
+            name: "b-repo",
+            repoPath: URL(fileURLWithPath: "/tmp/b-repo"),
+            stableKey: "b",
+            worktrees: [Worktree(name: "feat-b", path: URL(fileURLWithPath: "/tmp/feat-b"), branch: "feat-b")]
+        )
+        let repoB = SidebarRepo(
+            id: UUID(),
+            name: "a-repo",
+            repoPath: URL(fileURLWithPath: "/tmp/a-repo"),
+            stableKey: "a",
+            worktrees: [Worktree(name: "feat-a", path: URL(fileURLWithPath: "/tmp/feat-a"), branch: "feat-a")]
+        )
+        let group = SidebarRepoGroup(
+            id: "remote:org/repo",
+            repoTitle: "repo",
+            organizationName: "org",
+            repos: [repoA, repoB]
+        )
+
+        let primaryRepo = RepoSidebarContentView.primaryRepoForGroup(group)
+        #expect(primaryRepo?.name == "a-repo")
+    }
 }

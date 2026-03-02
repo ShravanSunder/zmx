@@ -28,15 +28,19 @@ final class WorkspaceCacheStore {
         notificationCountByWorktreeId[worktreeId] = count
     }
 
+    func removeWorktree(_ worktreeId: UUID) {
+        worktreeEnrichmentByWorktreeId.removeValue(forKey: worktreeId)
+        pullRequestCountByWorktreeId.removeValue(forKey: worktreeId)
+        notificationCountByWorktreeId.removeValue(forKey: worktreeId)
+    }
+
     func removeRepo(_ repoId: UUID) {
         repoEnrichmentByRepoId.removeValue(forKey: repoId)
         let worktreeIdsToRemove = worktreeEnrichmentByWorktreeId.values
             .filter { $0.repoId == repoId }
             .map(\.worktreeId)
         for worktreeId in worktreeIdsToRemove {
-            worktreeEnrichmentByWorktreeId.removeValue(forKey: worktreeId)
-            pullRequestCountByWorktreeId.removeValue(forKey: worktreeId)
-            notificationCountByWorktreeId.removeValue(forKey: worktreeId)
+            removeWorktree(worktreeId)
         }
     }
 

@@ -635,14 +635,16 @@ struct GitWorkingDirectoryProjectorTests {
         collectionTask.cancel()
     }
 
-    @Test("projector emits local-only originChanged on first registration without remote")
-    func emitsLocalOnlyOriginChangedOnFirstRegistration() async throws {
+    @Test("projector emits one initial empty origin event without locking retry state")
+    func emitsInitialEmptyOriginEventWithoutLockingRetryState() async throws {
         let bus = EventBus<RuntimeEnvelope>()
         let repoId = UUID()
         let worktreeId = UUID()
         let rootPath = URL(fileURLWithPath: "/tmp/origin-none-\(UUID().uuidString)")
+        let callCounter = CallCounter()
         let provider = StubGitWorkingTreeStatusProvider { _ in
-            GitWorkingTreeStatus(
+            _ = await callCounter.increment()
+            return GitWorkingTreeStatus(
                 summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
                 branch: "main",
                 origin: nil
@@ -666,13 +668,80 @@ struct GitWorkingDirectoryProjectorTests {
             )
         )
 
-        let emittedLocalOriginEvent = await waitUntil {
-            await observed.originEventCount(for: repoId) == 1
+        // First registration probes origin and emits exactly one local-origin signal.
+        let emittedInitialOriginSignal = await waitUntil {
+            let calls = await callCounter.value()
+            let originEvents = await observed.originEventCount(for: repoId)
+            return calls >= 1 && originEvents == 1
         }
-        #expect(emittedLocalOriginEvent)
+        #expect(emittedInitialOriginSignal)
+        let initialEvent = await observed.latestOriginEvent(for: repoId)
+        #expect(initialEvent?.0.isEmpty == true)
+        #expect(initialEvent?.1.isEmpty == true)
+
+        await actor.shutdown()
+        collectionTask.cancel()
+    }
+
+    @Test("projector retries origin discovery after initial empty result")
+    func retriesOriginDiscoveryAfterInitialEmptyResult() async throws {
+        let bus = EventBus<RuntimeEnvelope>()
+        let repoId = UUID()
+        let worktreeId = UUID()
+        let rootPath = URL(fileURLWithPath: "/tmp/origin-retry-\(UUID().uuidString)")
+        let callCounter = CallCounter()
+        let provider = StubGitWorkingTreeStatusProvider { _ in
+            let call = await callCounter.increment()
+            let origin = call >= 2 ? "git@github.com:acme/repo.git" : nil
+            return GitWorkingTreeStatus(
+                summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
+                branch: "main",
+                origin: origin
+            )
+        }
+        let actor = GitWorkingDirectoryProjector(
+            bus: bus,
+            gitWorkingTreeProvider: provider,
+            coalescingWindow: .zero
+        )
+
+        let observed = ObservedGitEvents()
+        let collectionTask = await startCollection(on: bus, observed: observed)
+        await actor.start()
+
+        await bus.post(
+            makeEnvelope(
+                seq: 1,
+                worktreeId: worktreeId,
+                event: .worktreeRegistered(worktreeId: worktreeId, repoId: repoId, rootPath: rootPath)
+            )
+        )
+
+        let registrationProcessed = await waitUntil {
+            let calls = await callCounter.value()
+            let originEvents = await observed.originEventCount(for: repoId)
+            return calls >= 1 && originEvents == 1
+        }
+        #expect(registrationProcessed)
+
+        await bus.post(
+            makeFilesChangedEnvelope(
+                seq: 2,
+                worktreeId: worktreeId,
+                repoId: repoId,
+                rootPath: rootPath,
+                batchSeq: 1,
+                paths: [".git/config"]
+            )
+        )
+
+        let emittedOriginAfterRetry = await waitUntil {
+            await observed.originEventCount(for: repoId) == 2
+        }
+        #expect(emittedOriginAfterRetry)
         let event = await observed.latestOriginEvent(for: repoId)
         #expect(event?.0.isEmpty == true)
-        #expect(event?.1.isEmpty == true)
+        #expect(event?.1 == "git@github.com:acme/repo.git")
 
         await actor.shutdown()
         collectionTask.cancel()

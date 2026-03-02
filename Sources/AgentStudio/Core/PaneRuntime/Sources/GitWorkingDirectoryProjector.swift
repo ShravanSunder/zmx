@@ -18,16 +18,21 @@ actor GitWorkingDirectoryProjector {
     private let gitWorkingTreeProvider: any GitWorkingTreeStatusProvider
     private let envelopeClock: ContinuousClock
     private let coalescingWindow: Duration
+    private let periodicRefreshInterval: Duration?
     private let sleepClock: any Clock<Duration>
     private let subscriptionBufferLimit: Int
 
     private var subscriptionTask: Task<Void, Never>?
+    private var periodicRefreshTask: Task<Void, Never>?
     private var worktreeTasks: [UUID: Task<Void, Never>] = [:]
     private var pendingByWorktreeId: [UUID: FileChangeset] = [:]
     private var suppressedWorktreeIds: Set<UUID> = []
+    private var rootPathByWorktreeId: [UUID: URL] = [:]
     private var lastKnownBranchByWorktree: [UUID: String] = [:]
     private var repoIdByWorktreeId: [UUID: UUID] = [:]
     private var lastKnownOriginByRepoId: [UUID: String] = [:]
+    private var emittedInitialEmptyOriginRepoIds: Set<UUID> = []
+    private var nextPeriodicBatchSeqByWorktreeId: [UUID: UInt64] = [:]
     private var nextEnvelopeSequence: UInt64 = 0
 
     init(
@@ -35,6 +40,7 @@ actor GitWorkingDirectoryProjector {
         gitWorkingTreeProvider: any GitWorkingTreeStatusProvider = ShellGitWorkingTreeStatusProvider(),
         envelopeClock: ContinuousClock = ContinuousClock(),
         coalescingWindow: Duration = .zero,
+        periodicRefreshInterval: Duration? = nil,
         sleepClock: any Clock<Duration> = ContinuousClock(),
         subscriptionBufferLimit: Int = 256
     ) {
@@ -42,12 +48,14 @@ actor GitWorkingDirectoryProjector {
         self.gitWorkingTreeProvider = gitWorkingTreeProvider
         self.envelopeClock = envelopeClock
         self.coalescingWindow = coalescingWindow
+        self.periodicRefreshInterval = periodicRefreshInterval
         self.sleepClock = sleepClock
         self.subscriptionBufferLimit = subscriptionBufferLimit
     }
 
     isolated deinit {
         subscriptionTask?.cancel()
+        periodicRefreshTask?.cancel()
         for task in worktreeTasks.values {
             task.cancel()
         }
@@ -66,12 +74,17 @@ actor GitWorkingDirectoryProjector {
                 await self.handleIncomingRuntimeEnvelope(runtimeEnvelope)
             }
         }
+
+        startPeriodicRefreshLoopIfNeeded()
     }
 
     func shutdown() async {
         let subscription = subscriptionTask
         subscriptionTask?.cancel()
         subscriptionTask = nil
+        let periodicRefresh = periodicRefreshTask
+        periodicRefreshTask?.cancel()
+        periodicRefreshTask = nil
 
         var tasksToAwait: [Task<Void, Never>] = []
         for task in worktreeTasks.values {
@@ -83,14 +96,20 @@ actor GitWorkingDirectoryProjector {
         if let subscription {
             await subscription.value
         }
+        if let periodicRefresh {
+            await periodicRefresh.value
+        }
         for task in tasksToAwait {
             await task.value
         }
         pendingByWorktreeId.removeAll(keepingCapacity: false)
         suppressedWorktreeIds.removeAll(keepingCapacity: false)
+        rootPathByWorktreeId.removeAll(keepingCapacity: false)
         lastKnownBranchByWorktree.removeAll(keepingCapacity: false)
         repoIdByWorktreeId.removeAll(keepingCapacity: false)
         lastKnownOriginByRepoId.removeAll(keepingCapacity: false)
+        emittedInitialEmptyOriginRepoIds.removeAll(keepingCapacity: false)
+        nextPeriodicBatchSeqByWorktreeId.removeAll(keepingCapacity: false)
     }
 
     private func handleIncomingRuntimeEnvelope(_ envelope: RuntimeEnvelope) async {
@@ -102,6 +121,8 @@ actor GitWorkingDirectoryProjector {
             case .worktreeRegistered(let worktreeId, let repoId, let rootPath):
                 suppressedWorktreeIds.remove(worktreeId)
                 repoIdByWorktreeId[worktreeId] = repoId
+                rootPathByWorktreeId[worktreeId] = rootPath
+                nextPeriodicBatchSeqByWorktreeId[worktreeId] = nextPeriodicBatchSeqByWorktreeId[worktreeId] ?? 0
                 pendingByWorktreeId[worktreeId] = FileChangeset(
                     worktreeId: worktreeId,
                     repoId: repoId,
@@ -116,8 +137,11 @@ actor GitWorkingDirectoryProjector {
                 pendingByWorktreeId.removeValue(forKey: worktreeId)
                 lastKnownBranchByWorktree.removeValue(forKey: worktreeId)
                 repoIdByWorktreeId.removeValue(forKey: worktreeId)
+                rootPathByWorktreeId.removeValue(forKey: worktreeId)
+                nextPeriodicBatchSeqByWorktreeId.removeValue(forKey: worktreeId)
                 if !repoIdByWorktreeId.values.contains(repoId) {
                     lastKnownOriginByRepoId.removeValue(forKey: repoId)
+                    emittedInitialEmptyOriginRepoIds.remove(repoId)
                 }
                 if let task = worktreeTasks.removeValue(forKey: worktreeId) {
                     task.cancel()
@@ -228,7 +252,30 @@ actor GitWorkingDirectoryProjector {
 
         let currentOrigin = (statusSnapshot.origin ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let previousOrigin = lastKnownOriginByRepoId[changeset.repoId]
+        if previousOrigin == nil && currentOrigin.isEmpty {
+            // Emit exactly once so local-only repos converge in downstream caches.
+            // Keep lastKnownOrigin unset to allow origin discovery retries.
+            guard !emittedInitialEmptyOriginRepoIds.contains(changeset.repoId) else { return }
+            emittedInitialEmptyOriginRepoIds.insert(changeset.repoId)
+            await emitGitWorkingDirectoryEvent(
+                worktreeId: changeset.worktreeId,
+                repoId: changeset.repoId,
+                event: .originChanged(
+                    repoId: changeset.repoId,
+                    from: "",
+                    to: ""
+                )
+            )
+            return
+        }
+
         if previousOrigin != currentOrigin {
+            // Update actor state before awaiting bus emission so concurrent worktree
+            // computations in the same repo do not emit duplicate origin events.
+            lastKnownOriginByRepoId[changeset.repoId] = currentOrigin
+            if !currentOrigin.isEmpty {
+                emittedInitialEmptyOriginRepoIds.remove(changeset.repoId)
+            }
             await emitGitWorkingDirectoryEvent(
                 worktreeId: changeset.worktreeId,
                 repoId: changeset.repoId,
@@ -238,7 +285,6 @@ actor GitWorkingDirectoryProjector {
                     to: currentOrigin
                 )
             )
-            lastKnownOriginByRepoId[changeset.repoId] = currentOrigin
         }
     }
 
@@ -282,5 +328,56 @@ actor GitWorkingDirectoryProjector {
             )
         }
         Self.logger.debug("Posted git projector event for worktree \(worktreeId.uuidString, privacy: .public)")
+    }
+
+    private func startPeriodicRefreshLoopIfNeeded() {
+        guard let periodicRefreshInterval else { return }
+        guard periodicRefreshInterval > .zero else { return }
+        guard periodicRefreshTask == nil else { return }
+
+        periodicRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await self.sleepClock.sleep(for: periodicRefreshInterval)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    Self.logger.warning(
+                        "Unexpected periodic git refresh sleep failure: \(String(describing: error), privacy: .public)"
+                    )
+                    continue
+                }
+                guard !Task.isCancelled else { return }
+                await self.enqueuePeriodicRefreshes()
+            }
+        }
+    }
+
+    private func enqueuePeriodicRefreshes() {
+        guard !rootPathByWorktreeId.isEmpty else { return }
+
+        for worktreeId in rootPathByWorktreeId.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
+            guard !suppressedWorktreeIds.contains(worktreeId) else { continue }
+            guard pendingByWorktreeId[worktreeId] == nil else { continue }
+            guard let repoId = repoIdByWorktreeId[worktreeId] else { continue }
+            guard let rootPath = rootPathByWorktreeId[worktreeId] else { continue }
+
+            let nextBatchSeq = (nextPeriodicBatchSeqByWorktreeId[worktreeId] ?? 0) + 1
+            nextPeriodicBatchSeqByWorktreeId[worktreeId] = nextBatchSeq
+
+            pendingByWorktreeId[worktreeId] = FileChangeset(
+                worktreeId: worktreeId,
+                repoId: repoId,
+                rootPath: rootPath,
+                paths: [],
+                containsGitInternalChanges: true,
+                suppressedIgnoredPathCount: 0,
+                suppressedGitInternalPathCount: 0,
+                timestamp: envelopeClock.now,
+                batchSeq: nextBatchSeq
+            )
+            spawnOrCoalesce(worktreeId: worktreeId)
+        }
     }
 }

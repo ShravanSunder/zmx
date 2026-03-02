@@ -949,14 +949,11 @@ struct GitBranchStatus: Equatable, Sendable {
 
 extension RepoSidebarContentView {
     static func primaryRepoForGroup(_ group: SidebarRepoGroup) -> SidebarRepo? {
-        let sortedRepos = group.repos.sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-        }
-        guard !sortedRepos.isEmpty else { return nil }
-
-        return sortedRepos.max { lhs, rhs in
-            if primaryRepoScore(lhs) != primaryRepoScore(rhs) {
-                return primaryRepoScore(lhs) < primaryRepoScore(rhs)
+        group.repos.max { lhs, rhs in
+            let lhsScore = primaryRepoScore(lhs)
+            let rhsScore = primaryRepoScore(rhs)
+            if lhsScore != rhsScore {
+                return lhsScore < rhsScore
             }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedDescending
         }

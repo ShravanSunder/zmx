@@ -94,7 +94,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
         case .loadCacheStore:
             workspaceCacheStore = WorkspaceCacheStore()
-            if let cacheState = persistor.loadCache(for: store.workspaceId) {
+            switch persistor.loadCache(for: store.workspaceId) {
+            case .loaded(let cacheState):
                 for enrichment in cacheState.repoEnrichmentByRepoId.values {
                     workspaceCacheStore.setRepoEnrichment(enrichment)
                 }
@@ -111,16 +112,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     sourceRevision: cacheState.sourceRevision,
                     at: cacheState.lastRebuiltAt ?? Date()
                 )
+            case .corrupt(let error):
+                appLogger.warning("Cache file corrupt, will rebuild from events: \(error)")
+            case .missing:
+                break
             }
         case .loadUIStore:
             workspaceUIStore = WorkspaceUIStore()
-            if let uiState = persistor.loadUI(for: store.workspaceId) {
+            switch persistor.loadUI(for: store.workspaceId) {
+            case .loaded(let uiState):
                 workspaceUIStore.setExpandedGroups(uiState.expandedGroups)
                 for (stableKey, colorHex) in uiState.checkoutColors {
                     workspaceUIStore.setCheckoutColor(colorHex, for: stableKey)
                 }
                 workspaceUIStore.setFilterText(uiState.filterText)
                 workspaceUIStore.setFilterVisible(uiState.isFilterVisible)
+            case .corrupt(let error):
+                appLogger.warning("UI state file corrupt, using defaults: \(error)")
+            case .missing:
+                break
             }
         case .establishRuntimeBus:
             runtime = SessionRuntime(store: store)

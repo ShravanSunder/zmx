@@ -410,6 +410,44 @@ struct PaneCoordinatorTests {
         _ = coordinator
     }
 
+    @Test("syncRootsAndActivity excludes unavailable repos from filesystem registration")
+    func syncRootsAndActivityExcludesUnavailableRepos() async {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appending(path: "agentstudio-pane-coordinator-sync-unavailable-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let persistor = WorkspacePersistor(workspacesDir: tempDir)
+        let store = WorkspaceStore(persistor: persistor)
+        store.restore()
+
+        let repo = store.addRepo(at: URL(fileURLWithPath: "/tmp/repo-sync-unavailable-\(UUID().uuidString)"))
+        store.markRepoUnavailable(repo.id)
+
+        let filesystemSource = RecordingFilesystemSource()
+        let paneEventBus = EventBus<RuntimeEnvelope>()
+        let coordinator = PaneCoordinator(
+            store: store,
+            viewRegistry: ViewRegistry(),
+            runtime: SessionRuntime(store: store),
+            surfaceManager: MockPaneCoordinatorSurfaceManager(),
+            runtimeRegistry: RuntimeRegistry(),
+            paneEventBus: paneEventBus,
+            filesystemSource: filesystemSource,
+            paneFilesystemProjectionStore: PaneFilesystemProjectionStore()
+        )
+
+        await waitUntilFilesystemState(
+            source: filesystemSource,
+            timeout: .milliseconds(600)
+        ) { snapshot in
+            snapshot.registeredRoots.isEmpty
+                && snapshot.activityByWorktreeId.isEmpty
+                && snapshot.activePaneWorktreeId == nil
+        }
+
+        _ = coordinator
+    }
+
     @Test("filesystem sync converges to latest roots when updates arrive during an in-flight pass")
     func syncRootsAndActivityConvergesUnderInFlightUpdates() async {
         let tempDir = FileManager.default.temporaryDirectory

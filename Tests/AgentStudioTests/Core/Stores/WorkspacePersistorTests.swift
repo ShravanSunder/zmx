@@ -3,6 +3,26 @@ import Testing
 
 @testable import AgentStudio
 
+// MARK: - LoadResult test helpers
+
+extension WorkspacePersistor.LoadResult {
+    /// Extract the loaded value or return nil — convenience for test assertions.
+    fileprivate var value: T? {
+        if case .loaded(let v) = self { return v }
+        return nil
+    }
+
+    fileprivate var isMissing: Bool {
+        if case .missing = self { return true }
+        return false
+    }
+
+    fileprivate var isCorrupt: Bool {
+        if case .corrupt = self { return true }
+        return false
+    }
+}
+
 @Suite(.serialized)
 final class WorkspacePersistorTests {
 
@@ -23,23 +43,21 @@ final class WorkspacePersistorTests {
     // MARK: - Save & Load
 
     @Test
-
     func test_saveAndLoad_emptyState() throws {
         // Arrange
         let state = WorkspacePersistor.PersistableState()
 
         // Act
         try persistor.save(state)
-        let loaded = persistor.load()
+        let loaded = persistor.load().value
 
         // Assert
-        #expect((loaded) != nil)
+        #expect(loaded != nil)
         #expect(loaded?.id == state.id)
         #expect(loaded?.panes.isEmpty ?? false)
     }
 
     @Test
-
     func test_saveAndLoad_withPanes() throws {
         // Arrange
         let pane = makePane(
@@ -55,7 +73,7 @@ final class WorkspacePersistorTests {
 
         // Act
         try persistor.save(state)
-        let loaded = persistor.load()
+        let loaded = persistor.load().value
 
         // Assert
         #expect(loaded?.panes.count == 1)
@@ -68,7 +86,6 @@ final class WorkspacePersistorTests {
     }
 
     @Test
-
     func test_saveAndLoad_withTabs() throws {
         // Arrange
         let paneId = UUID()
@@ -79,7 +96,7 @@ final class WorkspacePersistorTests {
 
         // Act
         try persistor.save(state)
-        let loaded = persistor.load()
+        let loaded = persistor.load().value
 
         // Assert
         #expect(loaded?.tabs.count == 1)
@@ -88,7 +105,6 @@ final class WorkspacePersistorTests {
     }
 
     @Test
-
     func test_saveAndLoad_withSplitLayout() throws {
         // Arrange
         let s1 = UUID()
@@ -100,7 +116,7 @@ final class WorkspacePersistorTests {
 
         // Act
         try persistor.save(state)
-        let loaded = persistor.load()
+        let loaded = persistor.load().value
 
         // Assert
         #expect(loaded?.tabs[0].paneIds == [s1, s2, s3])
@@ -108,7 +124,6 @@ final class WorkspacePersistorTests {
     }
 
     @Test
-
     func test_saveAndLoad_preservesAllFields() throws {
         // Arrange
         var state = WorkspacePersistor.PersistableState(
@@ -132,7 +147,7 @@ final class WorkspacePersistorTests {
 
         // Act
         try persistor.save(state)
-        let loaded = persistor.load()
+        let loaded = persistor.load().value
 
         // Assert
         #expect(loaded?.name == "My Workspace")
@@ -143,89 +158,76 @@ final class WorkspacePersistorTests {
         #expect(loaded?.worktrees.count == 1)
     }
 
-    @Test
+    // MARK: - Load Missing & Corrupt
 
-    func test_load_noFiles_returnsNil() {
+    @Test
+    func test_load_noFiles_returnsMissing() {
         // The temp dir is empty
-        let loaded = persistor.load()
-        #expect((loaded) == nil)
+        #expect(persistor.load().isMissing)
     }
 
     @Test
-
-    func test_load_nonExistentDir_returnsNil() {
+    func test_load_nonExistentDir_returnsMissing() {
         // Arrange
         let badPersistor = WorkspacePersistor(
             workspacesDir: URL(fileURLWithPath: "/nonexistent/path/\(UUID().uuidString)")
         )
 
-        // Act
-        let loaded = badPersistor.load()
-
-        // Assert
-        #expect((loaded) == nil)
+        // Act & Assert
+        #expect(badPersistor.load().isMissing)
     }
 
     @Test
-
-    func test_load_legacyPaneSchemaWithoutKind_returnsNil() throws {
-        let pane = makePane(
-            source: .floating(workingDirectory: nil, title: nil),
-            title: "LegacyPane",
-            provider: .zmx
+    func test_load_corruptStateFile_returnsCorrupt() throws {
+        // Arrange — write garbage with the canonical suffix
+        let fakeId = UUID()
+        let corruptURL = tempDir.appending(
+            path: "\(fakeId.uuidString).workspace.state.json"
         )
-        var state = WorkspacePersistor.PersistableState()
-        state.panes = [pane]
-        let stateData = try JSONEncoder().encode(state)
+        try Data("{not-valid-json}".utf8).write(to: corruptURL, options: .atomic)
 
-        guard var stateObject = try JSONSerialization.jsonObject(with: stateData) as? [String: Any],
-            var panes = stateObject["panes"] as? [[String: Any]],
-            var firstPane = panes.first
-        else {
-            Issue.record("Expected persistable state JSON with panes")
-            return
-        }
+        // Act
+        let result = persistor.load()
 
-        firstPane.removeValue(forKey: "kind")
-        firstPane["drawer"] = [
-            "paneIds": [],
-            "layout": NSNull(),
-            "activePaneId": NSNull(),
-            "isExpanded": false,
-            "minimizedPaneIds": [],
-        ]
-        panes[0] = firstPane
-        stateObject["panes"] = panes
+        // Assert
+        #expect(result.isCorrupt)
+    }
 
-        let legacyData = try JSONSerialization.data(withJSONObject: stateObject)
-        let legacyURL = tempDir.appending(path: "legacy-\(UUID().uuidString).json")
-        try legacyData.write(to: legacyURL, options: .atomic)
+    @Test
+    func test_load_ignoresCacheAndUIFiles() throws {
+        // Arrange — write only cache and UI files, no canonical state
+        let workspaceId = UUID()
+        let cacheState = WorkspacePersistor.PersistableCacheState(workspaceId: workspaceId)
+        try persistor.saveCache(cacheState)
+        let uiState = WorkspacePersistor.PersistableUIState(workspaceId: workspaceId)
+        try persistor.saveUI(uiState)
 
-        let loaded = persistor.load(from: legacyURL)
-        #expect(loaded == nil)
+        // Act — load() should only look for *.workspace.state.json
+        let result = persistor.load()
+
+        // Assert
+        #expect(result.isMissing)
     }
 
     // MARK: - Delete
 
     @Test
-
     func test_delete_removesFile() throws {
         // Arrange
         let state = WorkspacePersistor.PersistableState()
         try persistor.save(state)
-        #expect((persistor.load()) != nil)
+        #expect(persistor.load().value != nil)
 
         // Act
         persistor.delete(id: state.id)
 
         // Assert
-        #expect((persistor.load()) == nil)
+        #expect(persistor.load().isMissing)
     }
 
     // MARK: - Multiple Saves
 
     @Test
-
     func test_save_overwritesPrevious() throws {
         // Arrange
         var state = WorkspacePersistor.PersistableState()
@@ -236,48 +238,15 @@ final class WorkspacePersistorTests {
         try persistor.save(state)
 
         // Act
-        let loaded = persistor.load()
+        let loaded = persistor.load().value
 
         // Assert
         #expect(loaded?.name == "Second Save")
     }
 
-    // MARK: - hasWorkspaceFiles
-
-    @Test
-
-    func test_hasWorkspaceFiles_emptyDir_returnsFalse() {
-        // Assert — freshly created temp dir has no workspace files
-        #expect(!(persistor.hasWorkspaceFiles()))
-    }
-
-    @Test
-
-    func test_hasWorkspaceFiles_afterSave_returnsTrue() throws {
-        // Arrange
-        let state = WorkspacePersistor.PersistableState()
-        try persistor.save(state)
-
-        // Assert
-        #expect(persistor.hasWorkspaceFiles())
-    }
-
-    @Test
-
-    func test_hasWorkspaceFiles_nonExistentDir_returnsFalse() {
-        // Arrange
-        let badPersistor = WorkspacePersistor(
-            workspacesDir: URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString)")
-        )
-
-        // Assert
-        #expect(!(badPersistor.hasWorkspaceFiles()))
-    }
-
     // MARK: - Save Failure
 
     @Test
-
     func test_save_toNonWritablePath_throws() {
         // Arrange
         let readOnlyPersistor = WorkspacePersistor(
@@ -290,6 +259,51 @@ final class WorkspacePersistorTests {
             try readOnlyPersistor.save(state)
         }
     }
+
+    // MARK: - Schema Version
+
+    @Test
+    func test_schemaVersion_roundTripsForCanonicalState() throws {
+        // Arrange
+        let state = WorkspacePersistor.PersistableState()
+
+        // Act
+        try persistor.save(state)
+        let loaded = persistor.load().value
+
+        // Assert
+        #expect(loaded?.schemaVersion == WorkspacePersistor.currentSchemaVersion)
+    }
+
+    @Test
+    func test_schemaVersion_roundTripsForCacheState() throws {
+        // Arrange
+        let workspaceId = UUID()
+        let cacheState = WorkspacePersistor.PersistableCacheState(workspaceId: workspaceId)
+
+        // Act
+        try persistor.saveCache(cacheState)
+        let loaded = persistor.loadCache(for: workspaceId).value
+
+        // Assert
+        #expect(loaded?.schemaVersion == WorkspacePersistor.currentSchemaVersion)
+    }
+
+    @Test
+    func test_schemaVersion_roundTripsForUIState() throws {
+        // Arrange
+        let workspaceId = UUID()
+        let uiState = WorkspacePersistor.PersistableUIState(workspaceId: workspaceId)
+
+        // Act
+        try persistor.saveUI(uiState)
+        let loaded = persistor.loadUI(for: workspaceId).value
+
+        // Assert
+        #expect(loaded?.schemaVersion == WorkspacePersistor.currentSchemaVersion)
+    }
+
+    // MARK: - Cache State
 
     @Test
     func test_saveAndLoad_cacheState() throws {
@@ -325,7 +339,7 @@ final class WorkspacePersistorTests {
         )
 
         try persistor.saveCache(cacheState)
-        let loaded = persistor.loadCache(for: workspaceId)
+        let loaded = persistor.loadCache(for: workspaceId).value
 
         #expect(loaded?.workspaceId == workspaceId)
         #expect(loaded?.repoEnrichmentByRepoId[repoId]?.organizationName == "askluna")
@@ -347,7 +361,7 @@ final class WorkspacePersistorTests {
         )
 
         try persistor.saveUI(uiState)
-        let loaded = persistor.loadUI(for: workspaceId)
+        let loaded = persistor.loadUI(for: workspaceId).value
 
         #expect(loaded?.workspaceId == workspaceId)
         #expect(loaded?.expandedGroups == ["askluna", "personal"])
@@ -357,119 +371,23 @@ final class WorkspacePersistorTests {
     }
 
     @Test
-    func test_loadCache_corruptJson_returnsNil() throws {
+    func test_loadCache_corruptJson_returnsCorrupt() throws {
         let workspaceId = UUID()
         let cacheURL = tempDir.appending(path: "\(workspaceId.uuidString).workspace.cache.json")
         let data = Data("{not-valid-json}".utf8)
         try data.write(to: cacheURL, options: .atomic)
 
-        let loaded = persistor.loadCache(for: workspaceId)
-
-        #expect(loaded == nil)
+        #expect(persistor.loadCache(for: workspaceId).isCorrupt)
     }
 
     @Test
-    func test_loadUI_corruptJson_returnsNil() throws {
+    func test_loadUI_corruptJson_returnsCorrupt() throws {
         let workspaceId = UUID()
         let uiURL = tempDir.appending(path: "\(workspaceId.uuidString).workspace.ui.json")
         let data = Data("{not-valid-json}".utf8)
         try data.write(to: uiURL, options: .atomic)
 
-        let loaded = persistor.loadUI(for: workspaceId)
-
-        #expect(loaded == nil)
+        #expect(persistor.loadUI(for: workspaceId).isCorrupt)
     }
 
-    @Test
-    func test_load_legacyWorkspaceStateWithInlineWorktrees_migratesToCanonicalShape() throws {
-        let workspaceId = UUID()
-        let repoId = UUID()
-        let worktreeId = UUID()
-        let repoPath = URL(fileURLWithPath: "/tmp/legacy-repo")
-
-        let legacyState = LegacyPersistableState(
-            id: workspaceId,
-            name: "Legacy Workspace",
-            repos: [
-                LegacyRepo(
-                    id: repoId,
-                    name: "legacy-repo",
-                    repoPath: repoPath,
-                    organizationName: "askluna",
-                    origin: "git@github.com:askluna/legacy-repo.git",
-                    upstream: nil,
-                    worktrees: [
-                        LegacyWorktree(
-                            id: worktreeId,
-                            name: "main",
-                            path: repoPath,
-                            branch: "main",
-                            agent: nil,
-                            status: .idle,
-                            isMainWorktree: true
-                        )
-                    ],
-                    createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-                    updatedAt: Date(timeIntervalSince1970: 1_700_000_100)
-                )
-            ],
-            panes: [],
-            tabs: [],
-            activeTabId: nil,
-            sidebarWidth: 250,
-            windowFrame: nil,
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            updatedAt: Date(timeIntervalSince1970: 1_700_000_100)
-        )
-
-        let legacyURL = tempDir.appending(path: "\(workspaceId.uuidString).workspace.state.json")
-        try JSONEncoder().encode(legacyState).write(to: legacyURL, options: .atomic)
-
-        let loaded = persistor.load()
-
-        #expect(loaded != nil)
-        #expect(loaded?.repos.count == 1)
-        #expect(loaded?.repos.first?.id == repoId)
-        #expect(loaded?.repos.first?.repoPath == repoPath)
-        #expect(loaded?.worktrees.count == 1)
-        #expect(loaded?.worktrees.first?.id == worktreeId)
-        #expect(loaded?.worktrees.first?.repoId == repoId)
-        #expect(loaded?.worktrees.first?.path == repoPath)
-        #expect(loaded?.unavailableRepoIds.isEmpty == true)
-    }
-
-    private struct LegacyPersistableState: Codable {
-        var id: UUID
-        var name: String
-        var repos: [LegacyRepo]
-        var panes: [Pane]
-        var tabs: [Tab]
-        var activeTabId: UUID?
-        var sidebarWidth: CGFloat
-        var windowFrame: CGRect?
-        var createdAt: Date
-        var updatedAt: Date
-    }
-
-    private struct LegacyRepo: Codable {
-        var id: UUID
-        var name: String
-        var repoPath: URL
-        var organizationName: String?
-        var origin: String?
-        var upstream: String?
-        var worktrees: [LegacyWorktree]
-        var createdAt: Date
-        var updatedAt: Date
-    }
-
-    private struct LegacyWorktree: Codable {
-        var id: UUID
-        var name: String
-        var path: URL
-        var branch: String
-        var agent: AgentType?
-        var status: WorktreeStatus
-        var isMainWorktree: Bool
-    }
 }

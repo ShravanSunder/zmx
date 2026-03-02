@@ -57,6 +57,7 @@ class MainSplitViewController: NSSplitViewController {
             uiStore: uiStore
         )
         let sidebarHosting = NSHostingController(rootView: AnyView(sidebarView))
+        sidebarHosting.sizingOptions = []
         self.sidebarHostingController = sidebarHosting
 
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHosting)
@@ -250,4 +251,3 @@ struct SidebarViewWrapper: View {
         )
     }
 }
-

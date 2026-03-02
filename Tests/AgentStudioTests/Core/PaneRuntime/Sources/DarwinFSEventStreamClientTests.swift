@@ -40,4 +40,5 @@ struct DarwinFSEventStreamClientTests {
         )
         client.unregister(worktreeId: UUID())
     }
+
 }

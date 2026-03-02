@@ -54,6 +54,125 @@ struct PrimarySidebarPipelineIntegrationTests {
         await forgeActor.shutdown()
     }
 
+    @Test("message-driven repo discovery seeds unresolved enrichment before origin resolves")
+    func messageDrivenRepoDiscoverySeedsUnresolvedBeforeResolution() async {
+        let bus = EventBus<RuntimeEnvelope>()
+        let workspaceStore = makeWorkspaceStore()
+        let cacheStore = WorkspaceCacheStore()
+        let (forgeActor, coordinator, projector) = makePipelineActors(
+            bus: bus,
+            workspaceStore: workspaceStore,
+            cacheStore: cacheStore
+        )
+
+        coordinator.startConsuming()
+        await projector.start()
+        await forgeActor.start()
+        defer { coordinator.stopConsuming() }
+
+        let repoPath = URL(fileURLWithPath: "/tmp/pipeline-discovered-\(UUID().uuidString)")
+        await postRepoDiscovered(bus: bus, repoPath: repoPath)
+
+        let unresolvedSeeded = await eventually("repo discovery should seed unresolved enrichment") {
+            guard let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) else {
+                return false
+            }
+            return cacheStore.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id)
+        }
+        #expect(unresolvedSeeded)
+
+        guard let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }),
+            let worktreeId = repo.worktrees.first?.id
+        else {
+            Issue.record("Expected discovered repo with a main worktree")
+            await projector.shutdown()
+            await forgeActor.shutdown()
+            return
+        }
+
+        await postWorktreeRegistered(
+            bus: bus,
+            worktreeId: worktreeId,
+            repoId: repo.id,
+            rootPath: repoPath
+        )
+
+        let resolvedIdentity = await eventually("worktree registration should converge unresolved to resolved identity")
+        {
+            guard case .some(.resolved(_, let raw, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id]
+            else {
+                return false
+            }
+            return raw.origin == "git@github.com:askluna/agent-studio.git"
+                && identity.groupKey == "remote:askluna/agent-studio"
+        }
+        #expect(resolvedIdentity)
+
+        await projector.shutdown()
+        await forgeActor.shutdown()
+    }
+
+    @Test("message-driven origin and branch events trigger a single forge path per event")
+    func messageDrivenOriginAndBranchEventsDoNotDoubleInvokeForge() async {
+        let bus = EventBus<RuntimeEnvelope>()
+        let workspaceStore = makeWorkspaceStore()
+        let cacheStore = WorkspaceCacheStore()
+        let callCounter = ForgeProviderCallCounter()
+        let forgeActor = ForgeActor(
+            bus: bus,
+            statusProvider: .stub { _, branches in
+                await callCounter.increment()
+                var counts: [String: Int] = [:]
+                for branch in branches {
+                    counts[branch] = 1
+                }
+                return counts
+            },
+            providerName: "stub",
+            pollInterval: .seconds(60)
+        )
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: bus,
+            workspaceStore: workspaceStore,
+            cacheStore: cacheStore,
+            scopeSyncHandler: { change in
+                switch change {
+                case .registerForgeRepo(let repoId, let remote):
+                    await forgeActor.register(repo: repoId, remote: remote)
+                case .unregisterForgeRepo(let repoId):
+                    await forgeActor.unregister(repo: repoId)
+                case .refreshForgeRepo(let repoId, let correlationId):
+                    await forgeActor.refresh(repo: repoId, correlationId: correlationId)
+                }
+            }
+        )
+
+        coordinator.startConsuming()
+        await forgeActor.start()
+        defer { coordinator.stopConsuming() }
+
+        let repo = workspaceStore.addRepo(at: URL(fileURLWithPath: "/tmp/pipeline-forge-dedupe"))
+        let worktreeId = UUID()
+        await postOriginChanged(
+            bus: bus,
+            repoId: repo.id,
+            worktreeId: worktreeId,
+            from: "",
+            to: "git@github.com:askluna/agent-studio.git"
+        )
+        await postBranchChanged(bus: bus, worktreeId: worktreeId, repoId: repo.id, from: "seed", to: "main")
+
+        let reachedExpectedCalls = await eventually("forge provider should be invoked for origin+branch once each") {
+            await callCounter.value() >= 2
+        }
+        #expect(reachedExpectedCalls)
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(await callCounter.value() == 2)
+
+        await forgeActor.shutdown()
+    }
+
     @Test("origin change updates resolved identity grouping")
     func originChangeUpdatesResolvedIdentityGrouping() {
         let workspaceStore = makeWorkspaceStore()
@@ -61,7 +180,8 @@ struct PrimarySidebarPipelineIntegrationTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repo = workspaceStore.addRepo(at: URL(fileURLWithPath: "/tmp/pipeline-origin-change"))
@@ -346,6 +466,25 @@ struct PrimarySidebarPipelineIntegrationTests {
         )
     }
 
+    private func postRepoDiscovered(
+        bus: EventBus<RuntimeEnvelope>,
+        repoPath: URL
+    ) async {
+        _ = await bus.post(
+            .system(
+                SystemEnvelope.test(
+                    event: .topology(
+                        .repoDiscovered(
+                            repoPath: repoPath,
+                            parentPath: repoPath.deletingLastPathComponent()
+                        )
+                    ),
+                    source: .builtin(.filesystemWatcher)
+                )
+            )
+        )
+    }
+
     private func postBranchChanged(
         bus: EventBus<RuntimeEnvelope>,
         worktreeId: UUID,
@@ -372,6 +511,27 @@ struct PrimarySidebarPipelineIntegrationTests {
         )
     }
 
+    private func postOriginChanged(
+        bus: EventBus<RuntimeEnvelope>,
+        repoId: UUID,
+        worktreeId: UUID,
+        from: String,
+        to: String
+    ) async {
+        _ = await bus.post(
+            .worktree(
+                WorktreeEnvelope.test(
+                    event: .gitWorkingDirectory(
+                        .originChanged(repoId: repoId, from: from, to: to)
+                    ),
+                    repoId: repoId,
+                    worktreeId: worktreeId,
+                    source: .system(.builtin(.gitWorkingDirectoryProjector))
+                )
+            )
+        )
+    }
+
     private func eventually(
         _ description: String,
         maxAttempts: Int = 100,
@@ -387,5 +547,17 @@ struct PrimarySidebarPipelineIntegrationTests {
         }
         Issue.record("\(description) timed out")
         return false
+    }
+}
+
+private actor ForgeProviderCallCounter {
+    private var calls = 0
+
+    func increment() {
+        calls += 1
+    }
+
+    func value() -> Int {
+        calls
     }
 }

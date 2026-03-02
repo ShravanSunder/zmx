@@ -47,7 +47,8 @@ extension E2ESerializedTests {
             let cacheCoordinator = WorkspaceCacheCoordinator(
                 bus: paneEventBus,
                 workspaceStore: store,
-                cacheStore: cacheStore
+                cacheStore: cacheStore,
+                scopeSyncHandler: { _ in }
             )
             cacheCoordinator.startConsuming()
 

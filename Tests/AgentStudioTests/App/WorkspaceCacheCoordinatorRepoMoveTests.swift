@@ -21,7 +21,8 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoPath = URL(fileURLWithPath: "/tmp/repo-move-test")
@@ -86,7 +87,8 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let oldRepoPath = URL(fileURLWithPath: "/tmp/repo-move-old")
@@ -142,7 +144,8 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoPath = URL(fileURLWithPath: "/tmp/repo-rediscovery")
@@ -184,7 +187,8 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let oldRepoPath = URL(fileURLWithPath: "/tmp/repo-move-backgrounded-old")
@@ -237,7 +241,8 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoPath = URL(fileURLWithPath: "/tmp/repo-remove-pending-undo")

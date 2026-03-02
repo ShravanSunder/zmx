@@ -8,14 +8,14 @@ final class WorkspaceCacheCoordinator {
     private let bus: EventBus<RuntimeEnvelope>
     private let workspaceStore: WorkspaceStore
     private let cacheStore: WorkspaceCacheStore
-    private let scopeSyncHandler: (@Sendable (ScopeChange) async -> Void)?
+    private let scopeSyncHandler: @Sendable (ScopeChange) async -> Void
     private var consumeTask: Task<Void, Never>?
 
     init(
         bus: EventBus<RuntimeEnvelope> = PaneRuntimeEventBus.shared,
         workspaceStore: WorkspaceStore,
         cacheStore: WorkspaceCacheStore,
-        scopeSyncHandler: (@Sendable (ScopeChange) async -> Void)? = nil
+        scopeSyncHandler: @escaping @Sendable (ScopeChange) async -> Void
     ) {
         self.bus = bus
         self.workspaceStore = workspaceStore
@@ -62,8 +62,12 @@ final class WorkspaceCacheCoordinator {
         case .repoDiscovered(let repoPath, _):
             let exists = workspaceStore.repos.contains { $0.repoPath == repoPath }
             if !exists {
-                _ = workspaceStore.addRepo(at: repoPath)
+                let repo = workspaceStore.addRepo(at: repoPath)
+                cacheStore.setRepoEnrichment(.unresolved(repoId: repo.id))
             } else if let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) {
+                if cacheStore.repoEnrichmentByRepoId[repo.id] == nil {
+                    cacheStore.setRepoEnrichment(.unresolved(repoId: repo.id))
+                }
                 if workspaceStore.isRepoUnavailable(repo.id) {
                     _ = workspaceStore.reassociateRepo(
                         repo.id,
@@ -111,6 +115,7 @@ final class WorkspaceCacheCoordinator {
             guard let repo = workspaceStore.repos.first(where: { $0.id == repoId }) else { return }
             let worktrees = repo.worktrees.filter { $0.id != worktreeId }
             workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: worktrees)
+            cacheStore.removeWorktree(worktreeId)
         }
     }
 
@@ -137,14 +142,14 @@ final class WorkspaceCacheCoordinator {
                 enrichment.branch = to
                 enrichment.updatedAt = Date()
                 cacheStore.setWorktreeEnrichment(enrichment)
-                Task { [weak self] in
-                    await self?.syncScope(
-                        .refreshForgeRepo(repoId: repoId, correlationId: envelope.correlationId)
-                    )
-                }
             case .originChanged(let repoId, _, let to):
                 let trimmedOrigin = to.trimmingCharacters(in: .whitespacesAndNewlines)
-                let upstream = cacheStore.repoEnrichmentByRepoId[repoId]?.upstream
+                let upstream: String?
+                if case .some(.resolved(_, let raw, _, _)) = cacheStore.repoEnrichmentByRepoId[repoId] {
+                    upstream = raw.upstream
+                } else {
+                    upstream = nil
+                }
                 let enrichment: RepoEnrichment
                 if trimmedOrigin.isEmpty {
                     let repoName = workspaceStore.repos.first(where: { $0.id == repoId })?.name ?? repoId.uuidString
@@ -175,14 +180,6 @@ final class WorkspaceCacheCoordinator {
                     )
                 }
                 cacheStore.setRepoEnrichment(enrichment)
-                Task { [weak self] in
-                    guard let self else { return }
-                    if trimmedOrigin.isEmpty {
-                        await self.syncScope(.unregisterForgeRepo(repoId: repoId))
-                    } else {
-                        await self.syncScope(.registerForgeRepo(repoId: repoId, remote: trimmedOrigin))
-                    }
-                }
             case .worktreeDiscovered, .worktreeRemoved, .diffAvailable:
                 break
             }
@@ -230,12 +227,6 @@ final class WorkspaceCacheCoordinator {
     }
 
     func syncScope(_ change: ScopeChange) async {
-        guard let scopeSyncHandler else {
-            Self.logger.warning(
-                "Scope change dropped because no sync handler is configured: \(String(describing: change), privacy: .public)"
-            )
-            return
-        }
         await scopeSyncHandler(change)
     }
 

@@ -62,32 +62,6 @@ struct GitHubCLIForgeStatusProvider: ForgeStatusProvider {
     }
 }
 
-struct NoopForgeStatusProvider: ForgeStatusProvider {
-    func pullRequestCounts(origin _: String, branches _: Set<String>) async throws -> [String: Int] {
-        [:]
-    }
-}
-
-struct StubForgeStatusProvider: ForgeStatusProvider {
-    let handler: @Sendable (String, Set<String>) async throws -> [String: Int]
-
-    init(handler: @escaping @Sendable (String, Set<String>) async throws -> [String: Int]) {
-        self.handler = handler
-    }
-
-    func pullRequestCounts(origin: String, branches: Set<String>) async throws -> [String: Int] {
-        try await handler(origin, branches)
-    }
-}
-
-extension ForgeStatusProvider where Self == StubForgeStatusProvider {
-    static func stub(
-        _ handler: @escaping @Sendable (String, Set<String>) async throws -> [String: Int]
-    ) -> StubForgeStatusProvider {
-        StubForgeStatusProvider(handler: handler)
-    }
-}
-
 actor ForgeActor {
     private static let logger = Logger(subsystem: "com.agentstudio", category: "ForgeActor")
 
@@ -104,12 +78,11 @@ actor ForgeActor {
     private var nextEnvelopeSequence: UInt64 = 0
     private var repoOriginByRepoId: [UUID: String] = [:]
     private var branchesByRepoId: [UUID: Set<String>] = [:]
-    private var hasLoggedNoopProviderWarning = false
 
     init(
         bus: EventBus<RuntimeEnvelope> = PaneRuntimeEventBus.shared,
-        statusProvider: any ForgeStatusProvider = NoopForgeStatusProvider(),
-        providerName: String = "noop",
+        statusProvider: any ForgeStatusProvider,
+        providerName: String = "github",
         envelopeClock: ContinuousClock = ContinuousClock(),
         pollInterval: Duration = .seconds(45),
         sleepClock: any Clock<Duration> = ContinuousClock(),
@@ -130,8 +103,6 @@ actor ForgeActor {
     }
 
     func start() async {
-        maybeLogNoopProviderWarning()
-
         if subscriptionTask == nil {
             let stream = await runtimeBus.subscribe(
                 bufferingPolicy: .bufferingNewest(subscriptionBufferLimit)
@@ -279,15 +250,6 @@ actor ForgeActor {
                 event: .refreshFailed(repoId: repoId, error: String(describing: error))
             )
         }
-    }
-
-    private func maybeLogNoopProviderWarning() {
-        guard !hasLoggedNoopProviderWarning else { return }
-        guard providerName == "noop" else { return }
-        hasLoggedNoopProviderWarning = true
-        Self.logger.warning(
-            "ForgeActor running with noop provider; forge enrichment will remain empty until a real provider is configured."
-        )
     }
 
     private func emitForgeEvent(

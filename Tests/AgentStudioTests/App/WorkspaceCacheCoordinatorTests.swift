@@ -22,7 +22,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoPath = URL(fileURLWithPath: "/tmp/luna-repo")
@@ -32,7 +33,11 @@ final class WorkspaceCacheCoordinatorTests {
 
         coordinator.handleTopology(envelope)
 
-        #expect(workspaceStore.repos.contains(where: { $0.repoPath == repoPath }))
+        guard let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) else {
+            Issue.record("Expected discovered repo to be added")
+            return
+        }
+        #expect(cacheStore.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id))
     }
 
     @Test
@@ -42,7 +47,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoCountBefore = workspaceStore.repos.count
@@ -68,7 +74,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoPath = URL(fileURLWithPath: "/tmp/luna-duplicate-repo")
@@ -89,7 +96,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let envelope = SystemEnvelope.test(
@@ -107,13 +115,55 @@ final class WorkspaceCacheCoordinatorTests {
     }
 
     @Test
+    func topology_worktreeUnregistered_prunesWorktreeCaches() {
+        let workspaceStore = makeWorkspaceStore()
+        let cacheStore = WorkspaceCacheStore()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repoPath = URL(fileURLWithPath: "/tmp/luna-unregister-prune")
+        let repo = workspaceStore.addRepo(at: repoPath)
+        guard let worktreeId = workspaceStore.repos.first(where: { $0.id == repo.id })?.worktrees.first?.id else {
+            Issue.record("Expected repo to have a main worktree")
+            return
+        }
+
+        cacheStore.setWorktreeEnrichment(
+            WorktreeEnrichment(
+                worktreeId: worktreeId,
+                repoId: repo.id,
+                branch: "main"
+            )
+        )
+        cacheStore.setPullRequestCount(5, for: worktreeId)
+        cacheStore.setNotificationCount(2, for: worktreeId)
+
+        coordinator.handleTopology(
+            SystemEnvelope.test(
+                event: .topology(
+                    .worktreeUnregistered(worktreeId: worktreeId, repoId: repo.id)
+                )
+            )
+        )
+
+        #expect(cacheStore.worktreeEnrichmentByWorktreeId[worktreeId] == nil)
+        #expect(cacheStore.pullRequestCountByWorktreeId[worktreeId] == nil)
+        #expect(cacheStore.notificationCountByWorktreeId[worktreeId] == nil)
+    }
+
+    @Test
     func enrichment_snapshotChanged_updatesWorktreeCache() {
         let workspaceStore = makeWorkspaceStore()
         let cacheStore = WorkspaceCacheStore()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoId = UUID()
@@ -146,7 +196,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoId = UUID()
@@ -189,7 +240,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repoId = UUID()
@@ -231,7 +283,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repo = workspaceStore.addRepo(at: URL(fileURLWithPath: "/tmp/luna-origin-identity"))
@@ -268,7 +321,8 @@ final class WorkspaceCacheCoordinatorTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
 
         let repo = workspaceStore.addRepo(at: URL(fileURLWithPath: "/tmp/MyProject"))
@@ -297,7 +351,7 @@ final class WorkspaceCacheCoordinatorTests {
     }
 
     @Test
-    func scopeSync_originChanged_registersAndRepoRemoved_unregisters() async {
+    func scopeSync_originAndBranchDoNotInvokeForgeCommands_repoRemoved_unregisters() async {
         let workspaceStore = makeWorkspaceStore()
         let cacheStore = WorkspaceCacheStore()
         let recordedScopeChanges = RecordedScopeChanges()
@@ -330,6 +384,22 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
+        coordinator.handleEnrichment(
+            WorktreeEnvelope.test(
+                event: .gitWorkingDirectory(
+                    .branchChanged(
+                        worktreeId: worktree.id,
+                        repoId: repo.id,
+                        from: "main",
+                        to: "feature/runtime"
+                    )
+                ),
+                repoId: repo.id,
+                worktreeId: worktree.id,
+                source: .system(.builtin(.gitWorkingDirectoryProjector))
+            )
+        )
+
         coordinator.handleTopology(
             SystemEnvelope.test(
                 event: .topology(.repoRemoved(repoPath: repoPath))
@@ -338,19 +408,11 @@ final class WorkspaceCacheCoordinatorTests {
 
         let completed = await eventually("scope changes should be recorded") {
             let count = await recordedScopeChanges.count
-            return count >= 2
+            return count >= 1
         }
         #expect(completed)
 
         let changes = await recordedScopeChanges.values
-        #expect(
-            changes.contains {
-                if case .registerForgeRepo(let repoId, let remote) = $0 {
-                    return repoId == repo.id && remote == "git@github.com:askluna/agent-studio.git"
-                }
-                return false
-            }
-        )
         #expect(
             changes.contains {
                 if case .unregisterForgeRepo(let repoId) = $0 {
@@ -358,6 +420,18 @@ final class WorkspaceCacheCoordinatorTests {
                 }
                 return false
             }
+        )
+        #expect(
+            changes.contains {
+                if case .registerForgeRepo = $0 { return true }
+                return false
+            } == false
+        )
+        #expect(
+            changes.contains {
+                if case .refreshForgeRepo = $0 { return true }
+                return false
+            } == false
         )
     }
 
@@ -416,14 +490,9 @@ final class WorkspaceCacheCoordinatorTests {
         }
         #expect(resolved)
 
-        let scopeSynced = await eventually("scope sync should register forge repo") {
+        let scopeSynced = await eventually("scope sync should not register forge repo for origin event path") {
             let changes = await recordedScopeChanges.values
-            return changes.contains {
-                if case .registerForgeRepo(let repoId, let remote) = $0 {
-                    return repoId == repo.id && remote == "git@github.com:askluna/agent-studio.git"
-                }
-                return false
-            }
+            return changes.isEmpty
         }
         #expect(scopeSynced)
 
@@ -485,14 +554,9 @@ final class WorkspaceCacheCoordinatorTests {
         }
         #expect(resolved)
 
-        let scopeSynced = await eventually("scope sync should unregister forge repo for local-only repo") {
+        let scopeSynced = await eventually("scope sync should remain empty for local-only origin event path") {
             let changes = await recordedScopeChanges.values
-            return changes.contains {
-                if case .unregisterForgeRepo(let repoId) = $0 {
-                    return repoId == repo.id
-                }
-                return false
-            }
+            return changes.isEmpty
         }
         #expect(scopeSynced)
 

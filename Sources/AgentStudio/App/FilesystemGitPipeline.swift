@@ -14,7 +14,8 @@ final class FilesystemGitPipeline: PaneCoordinatorFilesystemSourceManaging, Send
         gitWorkingTreeProvider: any GitWorkingTreeStatusProvider = ShellGitWorkingTreeStatusProvider(),
         forgeStatusProvider: any ForgeStatusProvider = GitHubCLIForgeStatusProvider(),
         fseventStreamClient: any FSEventStreamClient = DarwinFSEventStreamClient(),
-        gitCoalescingWindow: Duration = .milliseconds(200)
+        gitCoalescingWindow: Duration = .milliseconds(200),
+        gitPeriodicRefreshInterval: Duration? = .seconds(2)
     ) {
         self.filesystemActor = FilesystemActor(
             bus: bus,
@@ -23,7 +24,8 @@ final class FilesystemGitPipeline: PaneCoordinatorFilesystemSourceManaging, Send
         self.gitWorkingDirectoryProjector = GitWorkingDirectoryProjector(
             bus: bus,
             gitWorkingTreeProvider: gitWorkingTreeProvider,
-            coalescingWindow: gitCoalescingWindow
+            coalescingWindow: gitCoalescingWindow,
+            periodicRefreshInterval: gitPeriodicRefreshInterval
         )
         self.forgeActor = ForgeActor(
             bus: bus,

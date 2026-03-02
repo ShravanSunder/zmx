@@ -46,7 +46,8 @@ struct FilesystemGitPipelineIntegrationTests {
         let cacheCoordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: store,
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
         )
         let observed = ObservedFilesystemGitEvents()
 
@@ -97,6 +98,189 @@ struct FilesystemGitPipelineIntegrationTests {
         await pipeline.shutdown()
     }
 
+    @Test("periodic git refresh updates cache sync state without filesystem ingress")
+    func periodicGitRefreshUpdatesCacheWithoutFilesystemIngress() async throws {
+        let bus = EventBus<RuntimeEnvelope>()
+        let provider = MutableGitWorkingTreeStatusProvider(
+            status: GitWorkingTreeStatus(
+                summary: GitWorkingTreeSummary(
+                    changed: 0,
+                    staged: 0,
+                    untracked: 0,
+                    linesAdded: 0,
+                    linesDeleted: 0,
+                    aheadCount: 0,
+                    behindCount: 0,
+                    hasUpstream: true
+                ),
+                branch: "main",
+                origin: "git@github.com:askluna/agent-studio.git"
+            )
+        )
+        let pipeline = FilesystemGitPipeline(
+            bus: bus,
+            gitWorkingTreeProvider: provider,
+            fseventStreamClient: SilentFSEventStreamClient(),
+            gitCoalescingWindow: .zero,
+            gitPeriodicRefreshInterval: .milliseconds(120)
+        )
+        await pipeline.start()
+
+        let rootPath = FileManager.default.temporaryDirectory
+            .appending(path: "pipeline-periodic-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: rootPath, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootPath) }
+
+        let worktreeId = UUID()
+        let repoId = UUID()
+        let workspaceDir = FileManager.default.temporaryDirectory
+            .appending(path: "pipeline-periodic-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: workspaceDir) }
+        let store = WorkspaceStore(persistor: WorkspacePersistor(workspacesDir: workspaceDir))
+        store.restore()
+
+        let cacheStore = WorkspaceCacheStore()
+        let cacheCoordinator = WorkspaceCacheCoordinator(
+            bus: bus,
+            workspaceStore: store,
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
+        )
+        cacheCoordinator.startConsuming()
+        defer { cacheCoordinator.stopConsuming() }
+
+        await pipeline.register(worktreeId: worktreeId, repoId: repoId, rootPath: rootPath)
+
+        let initialSnapshotArrived = await eventually("initial periodic snapshot should arrive") {
+            guard let snapshot = cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot else { return false }
+            return snapshot.summary.aheadCount == 0 && snapshot.summary.behindCount == 0
+        }
+        #expect(initialSnapshotArrived)
+
+        await provider.setStatus(
+            GitWorkingTreeStatus(
+                summary: GitWorkingTreeSummary(
+                    changed: 0,
+                    staged: 0,
+                    untracked: 0,
+                    linesAdded: 0,
+                    linesDeleted: 0,
+                    aheadCount: 1,
+                    behindCount: 0,
+                    hasUpstream: true
+                ),
+                branch: "main",
+                origin: "git@github.com:askluna/agent-studio.git"
+            )
+        )
+
+        let aheadUpdateArrived = await eventually("periodic refresh should update ahead count") {
+            cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot?.summary.aheadCount == 1
+        }
+        #expect(aheadUpdateArrived)
+
+        await provider.setStatus(
+            GitWorkingTreeStatus(
+                summary: GitWorkingTreeSummary(
+                    changed: 0,
+                    staged: 0,
+                    untracked: 0,
+                    linesAdded: 0,
+                    linesDeleted: 0,
+                    aheadCount: 0,
+                    behindCount: 2,
+                    hasUpstream: true
+                ),
+                branch: "main",
+                origin: "git@github.com:askluna/agent-studio.git"
+            )
+        )
+
+        let behindUpdateArrived = await eventually("periodic refresh should update behind count") {
+            cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot?.summary.behindCount == 2
+        }
+        #expect(behindUpdateArrived)
+
+        await pipeline.shutdown()
+    }
+
+    @Test("pipeline retries origin discovery after initial empty origin and converges to remote identity")
+    func pipelineRetriesOriginDiscoveryAfterInitialEmptyOrigin() async throws {
+        func status(origin: String?) -> GitWorkingTreeStatus {
+            GitWorkingTreeStatus(
+                summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
+                branch: "main",
+                origin: origin
+            )
+        }
+
+        let bus = EventBus<RuntimeEnvelope>()
+        let provider = MutableGitWorkingTreeStatusProvider(status: status(origin: nil))
+        let pipeline = FilesystemGitPipeline(
+            bus: bus,
+            gitWorkingTreeProvider: provider,
+            fseventStreamClient: SilentFSEventStreamClient(),
+            gitCoalescingWindow: .zero,
+            gitPeriodicRefreshInterval: nil
+        )
+        await pipeline.start()
+
+        let rootPath = FileManager.default.temporaryDirectory
+            .appending(path: "pipeline-origin-retry-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: rootPath, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootPath) }
+
+        let workspaceDir = FileManager.default.temporaryDirectory
+            .appending(path: "pipeline-origin-retry-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: workspaceDir) }
+        let workspaceStore = WorkspaceStore(persistor: WorkspacePersistor(workspacesDir: workspaceDir))
+        workspaceStore.restore()
+        let repo = workspaceStore.addRepo(at: rootPath)
+        guard let worktreeId = repo.worktrees.first?.id else {
+            Issue.record("Expected repo to have main worktree")
+            await pipeline.shutdown()
+            return
+        }
+
+        let cacheStore = WorkspaceCacheStore()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: bus,
+            workspaceStore: workspaceStore,
+            cacheStore: cacheStore,
+            scopeSyncHandler: { _ in }
+        )
+        coordinator.startConsuming()
+        defer { coordinator.stopConsuming() }
+
+        await pipeline.register(worktreeId: worktreeId, repoId: repo.id, rootPath: rootPath)
+
+        let initialSnapshotConverged = await eventually(
+            "initial registration should produce a git snapshot before origin retry",
+            maxAttempts: 600
+        ) {
+            cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main"
+        }
+        #expect(initialSnapshotConverged)
+
+        await provider.setStatus(status(origin: "git@github.com:askluna/agent-studio.git"))
+        await pipeline.enqueueRawPathsForTesting(worktreeId: worktreeId, paths: [".git/config"])
+
+        let remoteIdentityConverged = await eventually(
+            "git config change should trigger origin retry and remote identity",
+            maxAttempts: 600
+        ) {
+            guard case .some(.resolved(_, let raw, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id]
+            else {
+                return false
+            }
+            return raw.origin == "git@github.com:askluna/agent-studio.git"
+                && identity.groupKey == "remote:askluna/agent-studio"
+        }
+        #expect(remoteIdentityConverged)
+
+        await pipeline.shutdown()
+    }
+
     private func eventually(
         _ description: String,
         maxAttempts: Int = 200,
@@ -112,6 +296,45 @@ struct FilesystemGitPipelineIntegrationTests {
         }
         Issue.record("\(description) timed out")
         return false
+    }
+}
+
+private actor MutableGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
+    private var currentStatus: GitWorkingTreeStatus?
+
+    init(status: GitWorkingTreeStatus?) {
+        self.currentStatus = status
+    }
+
+    func setStatus(_ status: GitWorkingTreeStatus?) {
+        currentStatus = status
+    }
+
+    func status(for _: URL) async -> GitWorkingTreeStatus? {
+        currentStatus
+    }
+}
+
+private final class SilentFSEventStreamClient: FSEventStreamClient, @unchecked Sendable {
+    private let stream: AsyncStream<FSEventBatch>
+    private let continuation: AsyncStream<FSEventBatch>.Continuation
+
+    init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: FSEventBatch.self)
+        self.stream = stream
+        self.continuation = continuation
+    }
+
+    func events() -> AsyncStream<FSEventBatch> {
+        stream
+    }
+
+    func register(worktreeId _: UUID, repoId _: UUID, rootPath _: URL) {}
+
+    func unregister(worktreeId _: UUID) {}
+
+    func shutdown() {
+        continuation.finish()
     }
 }
 
