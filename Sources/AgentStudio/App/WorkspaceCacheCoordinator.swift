@@ -228,6 +228,28 @@ final class WorkspaceCacheCoordinator {
         return name.hasSuffix(".git") ? String(name.dropLast(4)) : name
     }
 
+    /// Hard-deletes a repo and all associated cache/forge state.
+    /// Called for user-initiated removal (not filesystem disappearance).
+    func handleRepoRemoval(repoId: UUID) {
+        guard let repo = workspaceStore.repos.first(where: { $0.id == repoId }) else { return }
+
+        // 1. Prune all worktree-level cache entries for this repo
+        for worktree in repo.worktrees {
+            repoCache.removeWorktree(worktree.id)
+        }
+
+        // 2. Prune repo-level cache
+        repoCache.removeRepo(repoId)
+
+        // 3. Unregister from forge scope
+        Task { [weak self] in
+            await self?.syncScope(.unregisterForgeRepo(repoId: repoId))
+        }
+
+        // 4. Hard-delete from store (removes from repos array + persistence)
+        workspaceStore.removeRepo(repoId)
+    }
+
     func syncScope(_ change: ScopeChange) async {
         await scopeSyncHandler(change)
     }

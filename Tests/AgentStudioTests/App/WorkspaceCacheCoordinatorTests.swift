@@ -752,6 +752,241 @@ final class WorkspaceCacheCoordinatorTests {
         #expect(identity.groupKey == "remote:askluna/agent-studio")
     }
 
+    // MARK: - User-Initiated Repo Removal
+
+    @Test
+    func removeRepo_cleansUpCacheAndForgeScope() async {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let recordedScopeChanges = RecordedScopeChanges()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { change in
+                await recordedScopeChanges.record(change)
+            }
+        )
+
+        let repoPath = URL(fileURLWithPath: "/tmp/removal-test-repo")
+        let repo = workspaceStore.addRepo(at: repoPath)
+        let worktreeId = repo.worktrees.first!.id
+
+        // Seed cache with enrichment data
+        repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
+        repoCache.setWorktreeEnrichment(
+            WorktreeEnrichment(worktreeId: worktreeId, repoId: repo.id, branch: "main")
+        )
+        repoCache.setPullRequestCount(3, for: worktreeId)
+
+        // User-initiated removal
+        coordinator.handleRepoRemoval(repoId: repo.id)
+
+        // Repo should be hard-deleted from store
+        #expect(workspaceStore.repos.isEmpty)
+
+        // All cache entries should be pruned
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == nil)
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId] == nil)
+        #expect(repoCache.pullRequestCountByWorktreeId[worktreeId] == nil)
+
+        // Forge scope should be unregistered
+        let converged = await eventually("forge unregister should fire") {
+            let changes = await recordedScopeChanges.values
+            return changes.contains {
+                if case .unregisterForgeRepo(let id) = $0 { return id == repo.id }
+                return false
+            }
+        }
+        #expect(converged)
+    }
+
+    @Test
+    func removeRepo_unknownRepoId_isNoOp() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        // Should not crash or mutate anything
+        coordinator.handleRepoRemoval(repoId: UUID())
+        #expect(workspaceStore.repos.isEmpty)
+    }
+
+    // MARK: - Unavailable Repo Re-Add
+
+    @Test
+    func topology_repoDiscovered_unavailableRepo_reassociates() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repoPath = URL(fileURLWithPath: "/tmp/unavailable-repo")
+        let repo = workspaceStore.addRepo(at: repoPath)
+        workspaceStore.markRepoUnavailable(repo.id)
+        #expect(workspaceStore.isRepoUnavailable(repo.id))
+
+        // Re-discover same path — should clear unavailable
+        coordinator.handleTopology(
+            SystemEnvelope.test(
+                event: .topology(.repoDiscovered(repoPath: repoPath, parentPath: repoPath.deletingLastPathComponent()))
+            )
+        )
+
+        #expect(!workspaceStore.isRepoUnavailable(repo.id))
+        #expect(workspaceStore.repos.count == 1)
+        #expect(workspaceStore.repos[0].id == repo.id)
+    }
+
+    @Test
+    func addRepoGuard_unavailableRepoWorktree_shouldNotBlock() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoPath = URL(fileURLWithPath: "/tmp/stuck-repo")
+        let repo = workspaceStore.addRepo(at: repoPath)
+        workspaceStore.markRepoUnavailable(repo.id)
+
+        // The guard should NOT match unavailable repos
+        let normalizedPath = repoPath.standardizedFileURL
+        let isKnownAvailableWorktree = workspaceStore.repos.contains { repo in
+            !workspaceStore.isRepoUnavailable(repo.id)
+                && repo.worktrees.contains { $0.path.standardizedFileURL == normalizedPath }
+        }
+        #expect(!isKnownAvailableWorktree)
+    }
+
+    // MARK: - Lifecycle Integration
+
+    @Test
+    func integration_fullRepoLifecycle_addEnrichRemove() async {
+        let bus = EventBus<RuntimeEnvelope>()
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let recordedScopeChanges = RecordedScopeChanges()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: bus,
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { change in
+                await recordedScopeChanges.record(change)
+            }
+        )
+        let projector = GitWorkingDirectoryProjector(
+            bus: bus,
+            gitWorkingTreeProvider: .stub { _ in
+                GitWorkingTreeStatus(
+                    summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
+                    branch: "main",
+                    origin: "git@github.com:askluna/agent-studio.git"
+                )
+            },
+            coalescingWindow: .zero
+        )
+
+        coordinator.startConsuming()
+        await projector.start()
+        defer {
+            coordinator.stopConsuming()
+        }
+
+        // Phase 1: Discover repo
+        let repoPath = URL(fileURLWithPath: "/tmp/lifecycle-test-repo")
+        coordinator.handleTopology(
+            SystemEnvelope.test(
+                event: .topology(
+                    .repoDiscovered(repoPath: repoPath, parentPath: repoPath.deletingLastPathComponent())
+                )
+            )
+        )
+        #expect(workspaceStore.repos.count == 1)
+        let repo = workspaceStore.repos[0]
+
+        // Phase 2: Register worktree → triggers enrichment via projector
+        let worktreeId = UUID()
+        _ = await bus.post(
+            .system(
+                SystemEnvelope.test(
+                    event: .topology(
+                        .worktreeRegistered(worktreeId: worktreeId, repoId: repo.id, rootPath: repoPath)
+                    ),
+                    source: .builtin(.filesystemWatcher)
+                )
+            )
+        )
+
+        let enriched = await eventually("enrichment should resolve") {
+            guard case .some(.resolved(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
+                return false
+            }
+            return identity.groupKey == "remote:askluna/agent-studio"
+        }
+        #expect(enriched)
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main")
+
+        // Phase 3: User removes repo
+        coordinator.handleRepoRemoval(repoId: repo.id)
+
+        // Repo gone
+        #expect(workspaceStore.repos.isEmpty)
+
+        // Cache fully pruned
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == nil)
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId] == nil)
+
+        // Forge unregistered
+        let unregistered = await eventually("forge unregister should fire") {
+            let changes = await recordedScopeChanges.values
+            return changes.contains {
+                if case .unregisterForgeRepo(let id) = $0 { return id == repo.id }
+                return false
+            }
+        }
+        #expect(unregistered)
+
+        await projector.shutdown()
+    }
+
+    @Test
+    func integration_unavailableRepoReAdd_clearsUnavailableState() async {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        // Setup: add repo, mark unavailable (simulating filesystem disappearance)
+        let repoPath = URL(fileURLWithPath: "/tmp/re-add-test-repo")
+        let repo = workspaceStore.addRepo(at: repoPath)
+        workspaceStore.markRepoUnavailable(repo.id)
+        #expect(workspaceStore.isRepoUnavailable(repo.id))
+
+        // User re-adds the same path
+        coordinator.handleTopology(
+            SystemEnvelope.test(
+                event: .topology(
+                    .repoDiscovered(repoPath: repoPath, parentPath: repoPath.deletingLastPathComponent())
+                )
+            )
+        )
+
+        // Should be available again, same ID, enrichment seeded
+        #expect(!workspaceStore.isRepoUnavailable(repo.id))
+        #expect(workspaceStore.repos.count == 1)
+        #expect(workspaceStore.repos[0].id == repo.id)
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id))
+    }
+
     private func eventually(
         _ description: String,
         maxAttempts: Int = 100,

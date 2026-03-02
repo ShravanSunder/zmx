@@ -2,11 +2,11 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** "Add Folder" remembers the folder path persistently, and the system rescans it for new repos via a periodic timer — so cloning a new repo under a watched folder auto-discovers it in the sidebar.
+**Goal:** "Add Folder" persists the folder path. FilesystemActor watches it with FSEvents and rescans for new repos automatically — so cloning a repo under a watched folder appears in the sidebar within seconds.
 
-**Architecture:** Add a `WatchedPath` canonical model to `WorkspaceStore`, persisted in `workspace.state.json`. On boot and on "Add Folder," the `scopeSyncHandler` closure (which bridges `WorkspaceCacheCoordinator` → `FilesystemGitPipeline`) forwards watched folder paths to `FilesystemActor` for periodic rescan. `FilesystemActor` posts `.repoDiscovered` events on the `EventBus` — the existing idempotent coordinator handles dedup. No direct actor references from the coordinator; everything flows through the existing `scopeSyncHandler` closure pattern.
+**Architecture:** A `WatchedPath` model is persisted in `workspace.state.json` via `WorkspaceStore`. When watched paths change (Add Folder or boot), `FilesystemActor` registers each parent folder with `DarwinFSEventStreamClient` for FSEvents monitoring. When FSEvents fires (new `.git` directory appears), FilesystemActor rescans using `RepoScanner` and emits `.repoDiscovered` on the `EventBus`. The existing idempotent `WorkspaceCacheCoordinator` handles dedup. A lazy fallback timer (5 minutes) rescans for robustness. No UI changes — the only entry point is the existing "Add Folder" menu item.
 
-**Tech Stack:** Swift 6, @Observable stores, AsyncStream (RuntimeEventBus), Swift Testing framework
+**Tech Stack:** Swift 6, @Observable stores, DarwinFSEventStreamClient (FSEvents), AsyncStream (RuntimeEventBus), Swift Testing framework
 
 ---
 
@@ -14,112 +14,94 @@
 
 ### Key Files to Read First
 
-Before starting, read these files to understand the system you're extending:
-
-1. **CLAUDE.md** — Project conventions, build commands, state management mental model (especially "Event-Driven Enrichment" section)
-2. **docs/architecture/workspace_data_architecture.md** — Three-tier persistence, enrichment pipeline, event contracts, "Event System Design: What It Is (and Isn't)" section
-3. **Sources/AgentStudio/Core/PaneRuntime/Contracts/RuntimeEnvelopeCore.swift** — Event type definitions. Note: `ConfigChangeEvent.watchedPathsUpdated(paths: [URL])` already exists but nothing emits it yet.
-4. **Sources/AgentStudio/App/AppDelegate.swift** — `handleAddFolderRequested()` (line ~823), `addRepoIfNeeded()` (line ~860), `replayBootTopology()` (line ~244), `makeTopologyEnvelope()` (line ~269). Also see how `WorkspaceCacheCoordinator` is wired with `scopeSyncHandler` closure (line ~191).
-5. **Sources/AgentStudio/Infrastructure/RepoScanner.swift** — One-shot scanner: `scanForGitRepos(in:maxDepth:)`. You'll reuse this, not replace it.
-6. **Sources/AgentStudio/Core/Stores/WorkspacePersistor.swift** — `PersistableState` struct (line ~23). You'll add `watchedPaths` here.
-7. **Sources/AgentStudio/Core/Stores/WorkspaceStore.swift** — Canonical store. You'll add `watchedPaths: [WatchedPath]` and mutation methods.
-8. **Sources/AgentStudio/App/WorkspaceCacheCoordinator.swift** — Consumes events, updates stores. Already handles `.repoDiscovered` idempotently. Uses `scopeSyncHandler` closure (not direct actor references) to communicate with `FilesystemGitPipeline`. Init requires: `bus`, `workspaceStore`, `repoCache`, `scopeSyncHandler`.
-9. **Sources/AgentStudio/App/FilesystemGitPipeline.swift** — Composition root for `FilesystemActor`. The `scopeSyncHandler` closure in AppDelegate delegates to `pipeline.applyScopeChange()`.
-
-### How the Event System Works
-
-This is NOT CQRS. The pattern is: **mutate the store directly → emit a fact on the bus → coordinator updates the other store.**
-
-For this feature:
-1. User clicks "Add Folder" → `store.addWatchedPath(path)` (direct store mutation)
-2. `AppDelegate` tells the pipeline to start watching via `scopeSyncHandler` (same pattern as forge scope changes)
-3. `FilesystemActor` rescans the folder → emits `.repoDiscovered` for each repo found **on the EventBus**
-4. `WorkspaceCacheCoordinator` receives `.repoDiscovered` from the bus → idempotent upsert (already implemented)
-
-Do NOT route the store mutation through the bus. The bus notifies, stores decide.
+1. **CLAUDE.md** — State management patterns (especially patterns 2 and 4). Store boundaries are architectural decisions — ask the user before changing them.
+2. **[Event System Design](docs/architecture/workspace_data_architecture.md#event-system-design-what-it-is-and-isnt)** — This is NOT CQRS. Pattern: mutate store directly → emit fact on bus → coordinator updates other store.
+3. **`Sources/AgentStudio/Core/PaneRuntime/Sources/DarwinFSEventStreamClient.swift`** — Production FSEvents client. Registers paths, creates `FSEventStream` with `kFSEventStreamCreateFlagFileEvents`, pumps `FSEventBatch` through `AsyncStream`. You will reuse this for parent folder watching.
+4. **`Sources/AgentStudio/Core/PaneRuntime/Sources/FilesystemActor.swift`** — Currently registers worktree roots with `DarwinFSEventStreamClient`. You will extend it to also register parent folders. Key: `register(worktreeId:, repoId:, rootPath:)` creates one FSEvent stream per path.
+5. **`Sources/AgentStudio/Infrastructure/RepoScanner.swift`** — Centralized scanner: `scanForGitRepos(in:maxDepth:)`. Walks filesystem, stops at `.git` boundary, skips submodules. All scanning MUST go through this — no ad-hoc `.git` detection.
+6. **`Sources/AgentStudio/App/AppDelegate.swift`** — `handleAddFolderRequested()` (line ~823) uses `RepoScanner`. `addRepoIfNeeded()` (line ~860) emits `.repoDiscovered`. `replayBootTopology()` (line ~244) replays events on boot.
+7. **`Sources/AgentStudio/App/WorkspaceCacheCoordinator.swift`** — Uses `scopeSyncHandler` closure (not direct actor references) to communicate with `FilesystemGitPipeline`. Init: `bus`, `workspaceStore`, `repoCache`, `scopeSyncHandler`.
+8. **`Sources/AgentStudio/App/FilesystemGitPipeline.swift`** — Composition root. `applyScopeChange()` forwards `ScopeChange` to actors.
 
 ### Dependency Wiring Pattern
 
-The coordinator does **not** hold a direct reference to `FilesystemActor`. Instead, it uses a `scopeSyncHandler` closure injected at init:
+The coordinator does NOT hold direct actor references. It uses a `scopeSyncHandler` closure:
 
 ```swift
-// AppDelegate wires the closure:
-workspaceCacheCoordinator = WorkspaceCacheCoordinator(
-    bus: paneRuntimeBus,
-    workspaceStore: store,
-    repoCache: workspaceRepoCache,
-    scopeSyncHandler: { [weak pipeline] change in
-        guard let pipeline else { return }
-        await pipeline.applyScopeChange(change)
-    }
-)
+// AppDelegate wires:
+scopeSyncHandler: { [weak pipeline] change in
+    guard let pipeline else { return }
+    await pipeline.applyScopeChange(change)
+}
 ```
 
-When adding new scope operations (like "start watching a folder"), extend the `ScopeChange` enum and the pipeline's `applyScopeChange()` method. Do NOT add direct actor references to the coordinator.
+Extend `ScopeChange` enum → extend `applyScopeChange()` → call `FilesystemActor`. Never add direct actor references to the coordinator.
 
-### Build & Test Commands
+### Build & Test
 
 ```bash
-AGENT_RUN_ID=watch-$(date +%s) mise run build    # Full build (timeout 60s)
-AGENT_RUN_ID=watch-$(date +%s) mise run test     # Full test suite (timeout 120s)
-AGENT_RUN_ID=watch-$(date +%s) mise run lint     # Lint check
-
-# Filtered test run:
-SWIFT_BUILD_DIR=".build-agent-$(uuidgen | tr -dc 'a-z0-9' | head -c 8)"
-swift test --build-path "$SWIFT_BUILD_DIR" --filter "WatchedPath" > /tmp/test-output.txt 2>&1 && echo "PASS" || echo "FAIL"
+AGENT_RUN_ID=watch-$(date +%s) mise run build    # timeout 60s
+AGENT_RUN_ID=watch-$(date +%s) mise run test     # timeout 120s
+AGENT_RUN_ID=watch-$(date +%s) mise run lint
 ```
 
-**CRITICAL:** Never run two swift commands in parallel. SwiftPM holds an exclusive lock. Always sequential.
+**Never run two swift commands in parallel.** SwiftPM holds an exclusive lock. Always sequential.
 
 ---
 
-### Task 1: Create WatchedPath Model
-
-**Why first:** Everything depends on this type existing.
+### Task 1: WatchedPath Model + RepoScanner Constant
 
 **Files:**
 - Create: `Sources/AgentStudio/Core/Models/WatchedPath.swift`
+- Modify: `Sources/AgentStudio/Infrastructure/RepoScanner.swift`
 - Test: `Tests/AgentStudioTests/Core/Models/WatchedPathTests.swift`
 
-**Step 1: Write the model**
+**Step 1: Add maxDepth constant to RepoScanner**
+
+Currently `maxDepth: 3` is scattered across call sites. Centralize it:
+
+```swift
+// RepoScanner.swift — add at top of struct
+struct RepoScanner {
+    /// Default scan depth for parent folder discovery.
+    /// Depth 4 supports layouts like ~/projects/org/suborg/repo/.git
+    /// Scanning stops at the first .git boundary (no deeper).
+    static let defaultMaxDepth = 4
+
+    func scanForGitRepos(in rootURL: URL, maxDepth: Int = Self.defaultMaxDepth) -> [URL] {
+        // ... existing implementation unchanged
+    }
+}
+```
+
+Change default from 3 to 4. The scanner already stops at `.git` — increasing depth just allows deeper folder nesting before the first repo.
+
+**Step 2: Create WatchedPath model**
 
 ```swift
 // Sources/AgentStudio/Core/Models/WatchedPath.swift
 import Foundation
 
-/// A user-added folder path that the app watches for git repos.
-/// Persisted in workspace.state.json. Rescanned periodically for new repos.
+/// A user-added folder path persisted in workspace.state.json.
+/// FilesystemActor watches this path with FSEvents and rescans for new repos.
 struct WatchedPath: Codable, Identifiable, Hashable {
     let id: UUID
     var path: URL
-    var kind: WatchedPathKind
     var addedAt: Date
 
-    /// Deterministic identity derived from filesystem path via SHA-256.
     var stableKey: String { StableKey.fromPath(path) }
 
-    init(
-        id: UUID = UUID(),
-        path: URL,
-        kind: WatchedPathKind = .parentFolder,
-        addedAt: Date = Date()
-    ) {
+    init(id: UUID = UUID(), path: URL, addedAt: Date = Date()) {
         self.id = id
         self.path = path
-        self.kind = kind
         self.addedAt = addedAt
     }
 }
-
-enum WatchedPathKind: String, Codable, Sendable {
-    /// Scan children up to maxDepth for git repos. Rescan periodically.
-    case parentFolder
-}
 ```
 
-Note: Only `parentFolder` kind for now. Direct repo adds already work via `addRepoIfNeeded()`. YAGNI — don't add `.directRepo` until there's a behavioral split that requires it.
+No `kind` enum — all watched paths are parent folders. Direct repo adds use the existing `addRepoIfNeeded()` flow and don't need a WatchedPath.
 
-**Step 2: Write tests**
+**Step 3: Write tests**
 
 ```swift
 // Tests/AgentStudioTests/Core/Models/WatchedPathTests.swift
@@ -127,53 +109,48 @@ import Testing
 @testable import AgentStudio
 
 @Suite struct WatchedPathTests {
-    @Test func init_setsDefaults() {
-        let path = WatchedPath(path: URL(fileURLWithPath: "/projects"))
-        #expect(path.kind == .parentFolder)
-        #expect(!path.id.uuidString.isEmpty)
-    }
-
     @Test func stableKey_isDeterministic() {
         let a = WatchedPath(path: URL(fileURLWithPath: "/projects"))
         let b = WatchedPath(path: URL(fileURLWithPath: "/projects"))
         #expect(a.stableKey == b.stableKey)
     }
 
-    @Test func stableKey_differentPaths_areDifferent() {
+    @Test func stableKey_differentPaths_differ() {
         let a = WatchedPath(path: URL(fileURLWithPath: "/projects"))
         let b = WatchedPath(path: URL(fileURLWithPath: "/other"))
         #expect(a.stableKey != b.stableKey)
     }
 
     @Test func codable_roundTrips() throws {
-        let original = WatchedPath(path: URL(fileURLWithPath: "/projects"), kind: .parentFolder)
+        let original = WatchedPath(path: URL(fileURLWithPath: "/projects"))
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(WatchedPath.self, from: data)
         #expect(decoded.id == original.id)
         #expect(decoded.path == original.path)
-        #expect(decoded.kind == original.kind)
     }
 }
 ```
 
-**Step 3: Verify**
+**Step 4: Update all existing `maxDepth: 3` call sites to use `RepoScanner.defaultMaxDepth`**
+
+Search for `maxDepth: 3` across the codebase. Replace with `RepoScanner.defaultMaxDepth` or remove the parameter (since 4 is now the default).
+
+**Step 5: Verify**
 
 ```bash
 AGENT_RUN_ID=watch-$(date +%s) mise run build
 ```
 
-**Step 4: Commit**
+**Step 6: Commit**
 
 ```bash
-git add Sources/AgentStudio/Core/Models/WatchedPath.swift Tests/AgentStudioTests/Core/Models/WatchedPathTests.swift
-git commit -m "feat: add WatchedPath model for persistent folder watching"
+git add -A
+git commit -m "feat: add WatchedPath model, centralize RepoScanner.defaultMaxDepth to 4"
 ```
 
 ---
 
-### Task 2: Add WatchedPath to WorkspaceStore and Persistence
-
-**Why now:** The store must own watchedPaths before AppDelegate can add them.
+### Task 2: WatchedPath in WorkspaceStore + Persistence
 
 **Files:**
 - Modify: `Sources/AgentStudio/Core/Stores/WorkspaceStore.swift`
@@ -182,64 +159,46 @@ git commit -m "feat: add WatchedPath model for persistent folder watching"
 
 **Step 1: Add watchedPaths to WorkspaceStore**
 
-Add to the state properties section (near line 22):
-
 ```swift
 private(set) var watchedPaths: [WatchedPath] = []
-```
 
-Add mutation methods:
-
-```swift
 /// Add a watched path. Deduplicates by stableKey.
 @discardableResult
-func addWatchedPath(_ path: URL, kind: WatchedPathKind = .parentFolder) -> WatchedPath? {
+func addWatchedPath(_ path: URL) -> WatchedPath? {
     let normalizedPath = path.standardizedFileURL
-    let incomingStableKey = StableKey.fromPath(normalizedPath)
-    guard !watchedPaths.contains(where: { $0.stableKey == incomingStableKey }) else {
-        return watchedPaths.first { $0.stableKey == incomingStableKey }
+    let key = StableKey.fromPath(normalizedPath)
+    guard !watchedPaths.contains(where: { $0.stableKey == key }) else {
+        return watchedPaths.first { $0.stableKey == key }
     }
-    let watchedPath = WatchedPath(path: normalizedPath, kind: kind)
-    watchedPaths.append(watchedPath)
+    let wp = WatchedPath(path: normalizedPath)
+    watchedPaths.append(wp)
     markDirty()
-    return watchedPath
+    return wp
 }
 
-/// Remove a watched path by ID.
 func removeWatchedPath(_ id: UUID) {
     watchedPaths.removeAll { $0.id == id }
     markDirty()
 }
 ```
 
-**Step 2: Add watchedPaths to PersistableState**
+**Step 2: Add to PersistableState**
 
-In `WorkspacePersistor.swift`, add `watchedPaths: [WatchedPath]` to `PersistableState`.
+In `WorkspacePersistor.swift`:
+- Add `var watchedPaths: [WatchedPath]` to `PersistableState`
+- Add to init with default `[]`
+- Add to CodingKeys
+- In `init(from decoder:)`: `watchedPaths = try container.decodeIfPresent([WatchedPath].self, forKey: .watchedPaths) ?? []`
 
-Add to init with default `[]`. Add to CodingKeys. Add to `init(from decoder:)`:
+This `decodeIfPresent ?? []` is schema evolution — old files lack the field. Not backward compat ceremony.
 
-```swift
-watchedPaths = try container.decodeIfPresent([WatchedPath].self, forKey: .watchedPaths) ?? []
-```
-
-This `decodeIfPresent` is NOT backward-compat ceremony — it's schema evolution. Old workspace files don't have this field. The default `[]` means "no watched paths yet," which is the correct initial state. The field will be written on next save.
-
-Add to `buildPersistableState()` in WorkspaceStore and to `restore()`.
+In `WorkspaceStore`:
+- Add `watchedPaths: watchedPaths` to `buildPersistableState()`
+- Add `self.watchedPaths = state.watchedPaths` to `restore()`
 
 **Step 3: Write tests**
 
-In `WorkspaceStoreTests.swift`:
-
 ```swift
-@Test func addWatchedPath_addsAndMarksDirty() {
-    let store = WorkspaceStore()
-    let result = store.addWatchedPath(URL(fileURLWithPath: "/projects"))
-    #expect(result != nil)
-    #expect(store.watchedPaths.count == 1)
-    #expect(store.watchedPaths[0].path.path == "/projects")
-    #expect(store.watchedPaths[0].kind == .parentFolder)
-}
-
 @Test func addWatchedPath_deduplicatesByStableKey() {
     let store = WorkspaceStore()
     store.addWatchedPath(URL(fileURLWithPath: "/projects"))
@@ -266,23 +225,25 @@ AGENT_RUN_ID=watch-$(date +%s) mise run test
 
 ```bash
 git add -A
-git commit -m "feat: add watchedPaths to WorkspaceStore and persistence"
+git commit -m "feat: persist watchedPaths in WorkspaceStore and workspace.state.json"
 ```
 
 ---
 
-### Task 3: Extend ScopeChange for Watched Folder Operations
+### Task 3: Extend ScopeChange + FilesystemActor FSEvents Registration
 
-**Why now:** Before wiring AppDelegate or FilesystemActor, we need the `ScopeChange` enum to support watched folder operations. This is how the coordinator communicates with actors — via the `scopeSyncHandler` closure.
+This is the core task. FilesystemActor gains FSEvents-based parent folder watching.
 
 **Files:**
-- Modify: `Sources/AgentStudio/App/WorkspaceCacheCoordinator.swift` — extend `ScopeChange` enum
-- Modify: `Sources/AgentStudio/App/FilesystemGitPipeline.swift` — handle new scope change in `applyScopeChange()`
-- Modify: `Sources/AgentStudio/Core/PaneRuntime/Sources/FilesystemActor.swift` — add watched folder tracking and rescan
+- Modify: `Sources/AgentStudio/App/WorkspaceCacheCoordinator.swift` — extend `ScopeChange`
+- Modify: `Sources/AgentStudio/App/FilesystemGitPipeline.swift` — forward new scope change
+- Modify: `Sources/AgentStudio/Core/PaneRuntime/Sources/FilesystemActor.swift` — add parent folder FSEvents + rescan
 
-**Step 1: Add ScopeChange cases**
+**Step 1: Read FilesystemActor fully**
 
-In `WorkspaceCacheCoordinator.swift`, extend the `ScopeChange` enum:
+Understand how `register()` creates FSEvent streams via `fseventStreamClient.register()`. How the ingress task processes `FSEventBatch`. How `ingestRawPaths()` filters and batches changes. You're adding a parallel path for parent folders.
+
+**Step 2: Add ScopeChange case**
 
 ```swift
 enum ScopeChange: Sendable {
@@ -293,125 +254,152 @@ enum ScopeChange: Sendable {
 }
 ```
 
-Update `CustomStringConvertible` extension.
+Update the `CustomStringConvertible` extension.
 
-**Step 2: Add rescan to FilesystemActor**
+**Step 3: Add parent folder tracking to FilesystemActor**
 
-Read `FilesystemActor.swift` fully first to understand its current structure. Then add:
+Key design: parent folder FSEvent registrations are keyed by a synthetic UUID (derived from folder stableKey, NOT a real worktreeId). When FSEvents fires under a parent folder, the actor runs `RepoScanner` on that folder and emits `.repoDiscovered` for each repo found. The existing idempotent coordinator handles dedup.
 
 ```swift
-private var watchedParentFolders: Set<URL> = []
-private var rescanTask: Task<Void, Never>?
+// New state in FilesystemActor
+private var watchedFolderIds: [URL: UUID] = [:]  // folder path → synthetic registration UUID
+private var fallbackRescanTask: Task<Void, Never>?
 
-func updateWatchedFolders(_ paths: [URL]) {
-    watchedParentFolders = Set(paths)
-    rescanTask?.cancel()
-    guard !watchedParentFolders.isEmpty else { return }
+func updateWatchedFolders(_ paths: [URL]) async {
+    let newPaths = Set(paths.map { $0.standardizedFileURL })
+    let oldPaths = Set(watchedFolderIds.keys)
 
-    // Immediate rescan
-    rescanWatchedFolders()
+    // Unregister removed folders
+    for removed in oldPaths.subtracting(newPaths) {
+        if let syntheticId = watchedFolderIds.removeValue(forKey: removed) {
+            fseventStreamClient.unregister(worktreeId: syntheticId)
+        }
+    }
 
-    // Periodic rescan every 60 seconds
-    rescanTask = Task { [weak self] in
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(60))
-            guard !Task.isCancelled else { break }
-            self?.rescanWatchedFolders()
+    // Register new folders
+    for added in newPaths.subtracting(oldPaths) {
+        let syntheticId = UUID()
+        watchedFolderIds[added] = syntheticId
+        fseventStreamClient.register(worktreeId: syntheticId, repoId: syntheticId, rootPath: added)
+    }
+
+    // Immediate scan of all watched folders
+    await rescanAllWatchedFolders()
+
+    // Fallback periodic rescan (5 minutes) for robustness
+    startFallbackRescan()
+}
+```
+
+**Step 4: Handle FSEvents from parent folders**
+
+The existing ingress task receives `FSEventBatch` with a `worktreeId`. For parent folder batches, the worktreeId will be the synthetic UUID. Detect this and trigger a rescan instead of the normal worktree-level processing:
+
+```swift
+// In the ingress processing loop, check if the batch is from a parent folder
+private func isWatchedFolderBatch(_ worktreeId: UUID) -> Bool {
+    watchedFolderIds.values.contains(worktreeId)
+}
+```
+
+When a batch arrives from a watched folder, filter for `.git` path changes (e.g., path contains `/.git`). If found, rescan that specific watched folder using `RepoScanner`.
+
+**Step 5: Implement rescan + event emission**
+
+```swift
+private func rescanAllWatchedFolders() async {
+    let scanner = RepoScanner()
+    for (folderPath, _) in watchedFolderIds {
+        let repoPaths = scanner.scanForGitRepos(in: folderPath)
+        for repoPath in repoPaths {
+            await emitRepoDiscovered(repoPath: repoPath, parentPath: folderPath)
         }
     }
 }
 
-private func rescanWatchedFolders() {
-    let scanner = RepoScanner()
-    for folder in watchedParentFolders {
-        let repoPaths = scanner.scanForGitRepos(in: folder, maxDepth: 3)
-        for repoPath in repoPaths {
-            let envelope = RuntimeEnvelope.system(
-                SystemEnvelope(
-                    source: .builtin(.filesystemWatcher),
-                    seq: nextSeq(),
-                    timestamp: .now,
-                    event: .topology(.repoDiscovered(
-                        repoPath: repoPath,
-                        parentPath: folder
-                    ))
-                )
-            )
-            Task { await eventBus.post(envelope) }
+private func emitRepoDiscovered(repoPath: URL, parentPath: URL) async {
+    let envelope = RuntimeEnvelope.system(
+        SystemEnvelope(
+            source: .builtin(.filesystemWatcher),
+            seq: nextSystemSeq(),
+            timestamp: envelopeClock.now,
+            event: .topology(.repoDiscovered(repoPath: repoPath, parentPath: parentPath))
+        )
+    )
+    await runtimeBus.post(envelope)
+}
+```
+
+Use the actor's existing monotonic sequence counter pattern (`nextSystemSeq()` or equivalent). Do NOT hardcode `seq: 0`. Read how the actor generates seq numbers for its other events and follow the same pattern.
+
+`RepoScanner.scanForGitRepos()` is blocking I/O. Since `FilesystemActor` is an `actor`, this runs on its serial executor. If performance is a concern, wrap in `@concurrent nonisolated` per project conventions. But for an initial implementation, the actor's executor is fine.
+
+**Step 6: Fallback timer**
+
+```swift
+private func startFallbackRescan() {
+    fallbackRescanTask?.cancel()
+    guard !watchedFolderIds.isEmpty else { return }
+    fallbackRescanTask = Task { [weak self] in
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(300))  // 5 minutes
+            guard !Task.isCancelled else { break }
+            await self?.rescanAllWatchedFolders()
         }
     }
 }
 ```
 
-Important: use the actor's existing `nextSeq()` method (or equivalent monotonic counter) for the `seq` field — NOT a hardcoded `0`. Check how `FilesystemActor` generates seq numbers for its other events and use the same pattern. If it uses `0` everywhere, that's OK — match the existing pattern.
+Cancel `fallbackRescanTask` in `shutdown()`.
 
-The `RepoScanner` scan is blocking I/O. If `FilesystemActor` is an `actor`, this runs on its serial executor which is fine — it's already the filesystem worker. If you need to offload, use `@concurrent nonisolated` per project conventions.
+**Step 7: Wire FilesystemGitPipeline**
 
-**Step 3: Wire FilesystemGitPipeline to forward the new scope change**
-
-In `FilesystemGitPipeline.applyScopeChange()`, add:
+In `FilesystemGitPipeline.applyScopeChange()`:
 
 ```swift
 case .updateWatchedFolders(let paths):
     await filesystemActor.updateWatchedFolders(paths)
 ```
 
-**Step 4: Cancel rescanTask on shutdown**
-
-Ensure `FilesystemActor`'s shutdown/deinit cancels `rescanTask`.
-
-**Step 5: Verify**
+**Step 8: Verify**
 
 ```bash
 AGENT_RUN_ID=watch-$(date +%s) mise run build
 ```
 
-**Step 6: Commit**
+**Step 9: Commit**
 
 ```bash
 git add -A
-git commit -m "feat: extend ScopeChange for watched folders, add rescan to FilesystemActor"
+git commit -m "feat: FSEvents-based parent folder watching in FilesystemActor"
 ```
 
 ---
 
-### Task 4: Wire AppDelegate — Add Folder Persists and Triggers Rescan
-
-**Why now:** All infrastructure is in place. Wire the user action.
+### Task 4: Wire AppDelegate — Add Folder Persists + Triggers Watch
 
 **Files:**
 - Modify: `Sources/AgentStudio/App/AppDelegate.swift`
 
 **Step 1: Modify handleAddFolderRequested**
 
-After the NSOpenPanel, persist the watched path AND trigger scope sync:
+Add `store.addWatchedPath(rootURL)` before the existing scan. Then trigger scope sync so FilesystemActor starts watching:
 
 ```swift
 private func handleAddFolderRequested(startingAt initialURL: URL? = nil) async {
-    let rootURL: URL
-    if let initialURL {
-        rootURL = initialURL.standardizedFileURL
-    } else {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose a folder containing git repositories"
-        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
-        rootURL = selectedURL.standardizedFileURL
-    }
+    // ... existing NSOpenPanel code unchanged ...
 
     // 1. Persist the watched path (direct store mutation)
-    store.addWatchedPath(rootURL, kind: .parentFolder)
+    store.addWatchedPath(rootURL)
 
     // 2. Tell FilesystemActor to start watching (via scopeSyncHandler)
     await workspaceCacheCoordinator.syncScope(
         .updateWatchedFolders(paths: store.watchedPaths.map(\.path))
     )
 
-    // 3. One-shot scan for immediate results (existing behavior, kept for responsiveness)
+    // 3. Existing one-shot scan for immediate feedback (kept for responsiveness)
     let repoPaths = await Task(priority: .userInitiated) {
-        RepoScanner().scanForGitRepos(in: rootURL, maxDepth: 3)
+        RepoScanner().scanForGitRepos(in: rootURL)
     }.value
 
     guard !repoPaths.isEmpty else {
@@ -430,11 +418,11 @@ private func handleAddFolderRequested(startingAt initialURL: URL? = nil) async {
 }
 ```
 
-Note: Step 3 is the existing one-shot scan — kept for immediate feedback. The periodic rescan from Task 3 handles future discoveries.
+Note: Step 3 is the existing scan — kept because it provides immediate results. The FSEvents watch (step 2) handles future discoveries.
 
-**Step 2: Emit watched folders on boot**
+**Step 2: Sync watched folders on boot**
 
-At the end of `replayBootTopology()`, sync watched folders:
+At the end of `replayBootTopology()`:
 
 ```swift
 if !store.watchedPaths.isEmpty {
@@ -444,62 +432,60 @@ if !store.watchedPaths.isEmpty {
 }
 ```
 
-**Step 3: Verify**
+**Step 3: Remove hardcoded maxDepth: 3 from handleAddFolderRequested**
+
+The call `RepoScanner().scanForGitRepos(in: rootURL, maxDepth: 3)` should become `RepoScanner().scanForGitRepos(in: rootURL)` — using the new default of 4.
+
+**Step 4: Verify**
 
 ```bash
 AGENT_RUN_ID=watch-$(date +%s) mise run build
 ```
 
-**Step 4: Commit**
+**Step 5: Commit**
 
 ```bash
 git add Sources/AgentStudio/App/AppDelegate.swift
-git commit -m "feat: Add Folder persists WatchedPath and triggers rescan via scopeSyncHandler"
+git commit -m "feat: Add Folder persists WatchedPath and triggers FSEvents watch on boot"
 ```
 
 ---
 
-### Task 5: Tests — Coordinator + Store + ScopeChange Integration
-
-**Why now:** All pieces are wired. Test the coordinator flow with real stores.
+### Task 5: Tests
 
 **Files:**
 - Modify: `Tests/AgentStudioTests/App/WorkspaceCacheCoordinatorTests.swift`
 
-**Step 1: Write integration tests**
-
-Tests must use the real coordinator init signature including `scopeSyncHandler`:
+**Step 1: Test scope change forwarding**
 
 ```swift
-@Test func watchedFolder_scopeChangeEmitted_onRescan() async {
-    // Arrange
+@Test func updateWatchedFolders_scopeChangeForwarded() async {
     let workspaceStore = WorkspaceStore()
     let repoCache = WorkspaceRepoCache()
-    var recordedScopeChanges: [ScopeChange] = []
+    var recorded: [ScopeChange] = []
     let coordinator = WorkspaceCacheCoordinator(
         workspaceStore: workspaceStore,
         repoCache: repoCache,
-        scopeSyncHandler: { change in
-            recordedScopeChanges.append(change)
-        }
+        scopeSyncHandler: { change in recorded.append(change) }
     )
 
-    // Act — simulate the scope sync that AppDelegate would trigger
     await coordinator.syncScope(
-        .updateWatchedFolders(paths: [URL(fileURLWithPath: "/tmp/test-projects")])
+        .updateWatchedFolders(paths: [URL(fileURLWithPath: "/projects")])
     )
 
-    // Assert — scope change was forwarded
-    #expect(recordedScopeChanges.count == 1)
-    if case .updateWatchedFolders(let paths) = recordedScopeChanges[0] {
+    #expect(recorded.count == 1)
+    if case .updateWatchedFolders(let paths) = recorded[0] {
         #expect(paths.count == 1)
     } else {
-        Issue.record("Expected updateWatchedFolders scope change")
+        Issue.record("Expected updateWatchedFolders")
     }
 }
+```
 
-@Test func rescan_discoveredRepo_idempotent() async {
-    // Arrange
+**Step 2: Test rescan dedup via coordinator**
+
+```swift
+@Test func rescan_repoDiscovered_idempotent() async {
     let workspaceStore = WorkspaceStore()
     let repoCache = WorkspaceRepoCache()
     let coordinator = WorkspaceCacheCoordinator(
@@ -507,11 +493,10 @@ Tests must use the real coordinator init signature including `scopeSyncHandler`:
         repoCache: repoCache,
         scopeSyncHandler: { _ in }
     )
-
-    let repoPath = URL(fileURLWithPath: "/tmp/test-projects/my-repo")
+    let repoPath = URL(fileURLWithPath: "/projects/my-repo")
     workspaceStore.addRepo(at: repoPath)
 
-    // Act — simulate FilesystemActor emitting .repoDiscovered from rescan (twice)
+    // Simulate two rescans finding the same repo
     let envelope = RuntimeEnvelope.system(
         SystemEnvelope(
             source: .builtin(.filesystemWatcher),
@@ -519,34 +504,33 @@ Tests must use the real coordinator init signature including `scopeSyncHandler`:
             timestamp: .now,
             event: .topology(.repoDiscovered(
                 repoPath: repoPath,
-                parentPath: URL(fileURLWithPath: "/tmp/test-projects")
+                parentPath: URL(fileURLWithPath: "/projects")
             ))
         )
     )
     coordinator.consume(envelope)
     coordinator.consume(envelope)
 
-    // Assert — still only one repo, one enrichment entry
     #expect(workspaceStore.repos.count == 1)
 }
 ```
 
-**Step 2: Verify**
+**Step 3: Verify**
 
 ```bash
 AGENT_RUN_ID=watch-$(date +%s) mise run test
 ```
 
-**Step 3: Commit**
+**Step 4: Commit**
 
 ```bash
-git add Tests/AgentStudioTests/App/WorkspaceCacheCoordinatorTests.swift
-git commit -m "test: integration tests for watched folder scope change and rescan dedup"
+git add -A
+git commit -m "test: watched folder scope change forwarding and rescan dedup"
 ```
 
 ---
 
-### Task 6: Full Verification Pass
+### Task 6: Verification Pass
 
 **Step 1: Format and lint**
 
@@ -564,17 +548,23 @@ AGENT_RUN_ID=watch-$(date +%s) mise run test
 **Step 3: Grep for consistency**
 
 ```bash
-# WatchedPath is referenced in persistence
+# No scattered maxDepth: 3 (should all use defaultMaxDepth or no param)
+grep -rn "maxDepth: 3" Sources/ --include="*.swift"
+
+# WatchedPath in persistence
 grep -rn "watchedPaths" Sources/AgentStudio/Core/Stores/WorkspacePersistor.swift
-# WatchedPath is in the store
-grep -rn "watchedPaths" Sources/AgentStudio/Core/Stores/WorkspaceStore.swift
+
 # ScopeChange has the new case
 grep -rn "updateWatchedFolders" Sources/AgentStudio/App/WorkspaceCacheCoordinator.swift
-# FilesystemActor handles rescan
-grep -rn "watchedParentFolders\|updateWatchedFolders\|rescanWatchedFolders" Sources/AgentStudio/Core/PaneRuntime/Sources/FilesystemActor.swift
-# Pipeline forwards the scope change
+
+# FilesystemActor handles parent folders
+grep -rn "watchedFolderIds\|updateWatchedFolders\|rescanAllWatchedFolders" Sources/AgentStudio/Core/PaneRuntime/Sources/FilesystemActor.swift
+
+# Pipeline forwards it
 grep -rn "updateWatchedFolders" Sources/AgentStudio/App/FilesystemGitPipeline.swift
 ```
+
+Expected: zero `maxDepth: 3` matches. All other greps return results.
 
 **Step 4: Commit**
 
@@ -589,22 +579,21 @@ git commit -m "chore: verification pass for persistent WatchedPath feature"
 
 | Task | What | Files |
 |------|------|-------|
-| 1 | WatchedPath model | `Core/Models/WatchedPath.swift` |
+| 1 | WatchedPath model + centralize maxDepth=4 | `WatchedPath.swift`, `RepoScanner.swift` |
 | 2 | Store + persistence | `WorkspaceStore.swift`, `WorkspacePersistor.swift` |
-| 3 | ScopeChange + FilesystemActor rescan + Pipeline wiring | `WorkspaceCacheCoordinator.swift`, `FilesystemActor.swift`, `FilesystemGitPipeline.swift` |
+| 3 | ScopeChange + FSEvents parent folder watching | `WorkspaceCacheCoordinator.swift`, `FilesystemActor.swift`, `FilesystemGitPipeline.swift` |
 | 4 | Wire AppDelegate (Add Folder + boot) | `AppDelegate.swift` |
-| 5 | Integration tests | `WorkspaceCacheCoordinatorTests.swift` |
+| 5 | Tests | `WorkspaceCacheCoordinatorTests.swift` |
 | 6 | Verification | All |
 
-## Issues Addressed from Review
+## Key Design Decisions
 
-| # | Issue | Resolution |
-|---|-------|------------|
-| 1 | Plan bypassed bus via coordinator.consume() | Rescan happens in FilesystemActor which posts `.repoDiscovered` on the EventBus. AppDelegate one-shot scan uses existing `.addRepoAtPathRequested` AppEvent flow. |
-| 2 | Coordinator wiring assumed direct FilesystemActor reference | Uses existing `scopeSyncHandler` closure → `FilesystemGitPipeline.applyScopeChange()` → `FilesystemActor`. Extended `ScopeChange` enum with `.updateWatchedFolders`. |
-| 3 | Test snippets missing scopeSyncHandler | All test examples include `scopeSyncHandler: { _ in }` or capture closure matching real init signature. |
-| 4 | decodeIfPresent vs "no backward compat" | This is schema evolution, not backward compat. Old files lack the field entirely — `?? []` gives correct initial state. Field written on next save. |
-| 5 | directRepo kind with no behavioral split | Removed `.directRepo` — only `.parentFolder` for now. YAGNI. Direct repo adds already work via `addRepoIfNeeded()`. |
-| 6 | "on filesystem events" claim vs timer | Updated goal to say "periodic timer." Parent-folder FSEvent registration is a future enhancement beyond this plan. |
-| 7 | seq: 0 inconsistency | Plan instructs to use `nextSeq()` or match existing actor pattern for monotonic sequencing. |
-| 8 | "Integration" test wasn't e2e | Tests now exercise the scopeSyncHandler path. True e2e (actor → bus → sidebar) is tested in existing `FilesystemToPrimarySidebarIntegrationTests`. |
+| Decision | Rationale |
+|----------|-----------|
+| FSEvents, not polling | Near-instant detection. No wasted I/O. Uses existing `DarwinFSEventStreamClient`. |
+| 5-min fallback timer | Robustness for edge cases where FSEvents misses something. Not the primary mechanism. |
+| maxDepth: 4 (centralized) | Supports `~/projects/org/suborg/repo/.git`. Scanner stops at `.git` — deeper nesting is safe. |
+| No `WatchedPathKind` enum | All watched paths are parent folders. Direct repos use `addRepoIfNeeded()`. YAGNI. |
+| No UI changes | Entry point is existing "Add Folder" menu item. No new UI surfaces. |
+| `ScopeChange`, not bus event | `ConfigChangeEvent.watchedPathsUpdated` exists but has no consumers. YAGNI. Don't delete it — emit when a consumer exists. |
+| Synthetic UUIDs for FSEvent registration | Parent folders aren't worktrees. Use a synthetic UUID keyed by folder path so `DarwinFSEventStreamClient` can manage the stream lifecycle. |

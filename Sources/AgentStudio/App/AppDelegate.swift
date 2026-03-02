@@ -377,7 +377,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 case .addRepoAtPathRequested(let path):
                     self.addRepoIfNeeded(path)
                 case .removeRepoRequested(let repoId):
-                    self.store.removeRepo(repoId)
+                    self.workspaceCacheCoordinator.handleRepoRemoval(repoId: repoId)
                     self.paneCoordinator.syncFilesystemRootsAndActivity()
                 default:
                     continue
@@ -860,9 +860,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func addRepoIfNeeded(_ path: URL) {
         let normalizedPath = path.standardizedFileURL
 
-        // Skip if the path is already a known worktree of an existing repo.
+        // Skip if the path is already a known worktree of an available repo.
+        // Unavailable repos are excluded so re-adding the same path can reassociate them.
         let isKnownWorktree = store.repos.contains { repo in
-            repo.worktrees.contains { $0.path.standardizedFileURL == normalizedPath }
+            !store.isRepoUnavailable(repo.id)
+                && repo.worktrees.contains { $0.path.standardizedFileURL == normalizedPath }
         }
         if isKnownWorktree { return }
 

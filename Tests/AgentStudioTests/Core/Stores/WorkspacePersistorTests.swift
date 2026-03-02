@@ -388,4 +388,97 @@ final class WorkspacePersistorTests {
         #expect(persistor.loadUI(for: workspaceId).isCorrupt)
     }
 
+    // MARK: - Strict Decoding (no legacy fallbacks)
+
+    @Test
+    func test_load_canonicalState_missingWorktrees_returnsCorrupt() throws {
+        // Arrange — JSON with all required fields except `worktrees`
+        let id = UUID()
+        let json = """
+            {
+                "schemaVersion": 1,
+                "id": "\(id.uuidString)",
+                "name": "Test",
+                "repos": [],
+                "unavailableRepoIds": [],
+                "panes": [],
+                "tabs": [],
+                "sidebarWidth": 250,
+                "createdAt": 0,
+                "updatedAt": 0
+            }
+            """
+        let fileURL = tempDir.appending(path: "\(id.uuidString).workspace.state.json")
+        try Data(json.utf8).write(to: fileURL, options: .atomic)
+
+        // Act & Assert — missing `worktrees` must be rejected, not silently defaulted
+        #expect(persistor.load().isCorrupt)
+    }
+
+    @Test
+    func test_load_canonicalState_missingSchemaVersion_returnsCorrupt() throws {
+        // Arrange — JSON with all required fields except `schemaVersion`
+        let id = UUID()
+        let json = """
+            {
+                "id": "\(id.uuidString)",
+                "name": "Test",
+                "repos": [],
+                "worktrees": [],
+                "unavailableRepoIds": [],
+                "panes": [],
+                "tabs": [],
+                "sidebarWidth": 250,
+                "createdAt": 0,
+                "updatedAt": 0
+            }
+            """
+        let fileURL = tempDir.appending(path: "\(id.uuidString).workspace.state.json")
+        try Data(json.utf8).write(to: fileURL, options: .atomic)
+
+        // Act & Assert — missing `schemaVersion` must be rejected, not defaulted to 0
+        #expect(persistor.load().isCorrupt)
+    }
+
+    @Test
+    func test_loadCache_missingRequiredField_returnsCorrupt() throws {
+        // Arrange — cache JSON missing required `repoEnrichmentByRepoId`
+        let workspaceId = UUID()
+        let json = """
+            {
+                "schemaVersion": 1,
+                "workspaceId": "\(workspaceId.uuidString)",
+                "worktreeEnrichmentByWorktreeId": {},
+                "pullRequestCountByWorktreeId": {},
+                "notificationCountByWorktreeId": {},
+                "sourceRevision": 0
+            }
+            """
+        let cacheURL = tempDir.appending(path: "\(workspaceId.uuidString).workspace.cache.json")
+        try Data(json.utf8).write(to: cacheURL, options: .atomic)
+
+        // Act & Assert — missing `repoEnrichmentByRepoId` must be rejected, not silently defaulted
+        #expect(persistor.loadCache(for: workspaceId).isCorrupt)
+    }
+
+    @Test
+    func test_loadUI_missingRequiredField_returnsCorrupt() throws {
+        // Arrange — UI JSON missing required `expandedGroups`
+        let workspaceId = UUID()
+        let json = """
+            {
+                "schemaVersion": 1,
+                "workspaceId": "\(workspaceId.uuidString)",
+                "checkoutColors": {},
+                "filterText": "",
+                "isFilterVisible": false
+            }
+            """
+        let uiURL = tempDir.appending(path: "\(workspaceId.uuidString).workspace.ui.json")
+        try Data(json.utf8).write(to: uiURL, options: .atomic)
+
+        // Act & Assert — missing `expandedGroups` must be rejected, not silently defaulted
+        #expect(persistor.loadUI(for: workspaceId).isCorrupt)
+    }
+
 }

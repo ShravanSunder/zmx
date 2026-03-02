@@ -86,7 +86,7 @@ extension PaneCoordinator {
         }
 
         let desiredContextEntries = desiredContextsByWorktreeId.sorted { lhs, rhs in
-            Self.sortWorktreeIds(lhs.key, rhs.key)
+            Self.sortWorktreeByPriority(lhs.key, rhs.key, activePaneWorktreeId: activePaneWorktreeId)
         }
         for (worktreeId, desiredContext) in desiredContextEntries {
             guard !Task.isCancelled else { return }
@@ -105,7 +105,7 @@ extension PaneCoordinator {
         }
 
         let activityEntries = activityByWorktreeId.sorted { lhs, rhs in
-            Self.sortWorktreeIds(lhs.key, rhs.key)
+            Self.sortWorktreeByPriority(lhs.key, rhs.key, activePaneWorktreeId: activePaneWorktreeId)
         }
         for (worktreeId, isActiveInApp) in activityEntries {
             let previousActivity = filesystemActivityByWorktreeId[worktreeId]
@@ -154,5 +154,14 @@ extension PaneCoordinator {
 
     nonisolated private static func sortWorktreeIds(_ lhs: UUID, _ rhs: UUID) -> Bool {
         lhs.uuidString < rhs.uuidString
+    }
+
+    nonisolated private static func sortWorktreeByPriority(
+        _ lhs: UUID, _ rhs: UUID, activePaneWorktreeId: UUID?
+    ) -> Bool {
+        let lhsActive = lhs == activePaneWorktreeId
+        let rhsActive = rhs == activePaneWorktreeId
+        if lhsActive != rhsActive { return lhsActive }
+        return lhs.uuidString < rhs.uuidString
     }
 }

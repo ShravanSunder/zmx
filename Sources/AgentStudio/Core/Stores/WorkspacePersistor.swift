@@ -64,63 +64,6 @@ struct WorkspacePersistor {
             self.updatedAt = updatedAt
         }
 
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-
-            // Default to 0 for files written before schema versioning was added.
-            schemaVersion =
-                try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
-
-            id = try container.decode(UUID.self, forKey: .id)
-            name = try container.decode(String.self, forKey: .name)
-
-            // Migration path: pre-split state stored `repos: [Repo]` with nested worktrees.
-            let canonicalRepos = try? container.decode([CanonicalRepo].self, forKey: .repos)
-            let legacyRepos = try? container.decode([Repo].self, forKey: .repos)
-            if let canonicalRepos {
-                repos = canonicalRepos
-            } else if let legacyRepos {
-                repos = legacyRepos.map {
-                    CanonicalRepo(id: $0.id, name: $0.name, repoPath: $0.repoPath, createdAt: $0.createdAt)
-                }
-            } else {
-                throw DecodingError.dataCorruptedError(
-                    forKey: .repos,
-                    in: container,
-                    debugDescription: "Unable to decode repos as canonical or legacy shape."
-                )
-            }
-
-            if let decodedWorktrees = try container.decodeIfPresent(
-                [CanonicalWorktree].self, forKey: .worktrees
-            ) {
-                worktrees = decodedWorktrees
-            } else if let legacyRepos {
-                worktrees = legacyRepos.flatMap { repo in
-                    repo.worktrees.map { worktree in
-                        CanonicalWorktree(
-                            id: worktree.id,
-                            repoId: repo.id,
-                            name: worktree.name,
-                            path: worktree.path,
-                            isMainWorktree: worktree.isMainWorktree
-                        )
-                    }
-                }
-            } else {
-                worktrees = []
-            }
-
-            unavailableRepoIds =
-                try container.decodeIfPresent(Set<UUID>.self, forKey: .unavailableRepoIds) ?? []
-            panes = try container.decode([Pane].self, forKey: .panes)
-            tabs = try container.decode([Tab].self, forKey: .tabs)
-            activeTabId = try container.decodeIfPresent(UUID.self, forKey: .activeTabId)
-            sidebarWidth = try container.decode(CGFloat.self, forKey: .sidebarWidth)
-            windowFrame = try container.decodeIfPresent(CGRect.self, forKey: .windowFrame)
-            createdAt = try container.decode(Date.self, forKey: .createdAt)
-            updatedAt = try container.decode(Date.self, forKey: .updatedAt)
-        }
     }
 
     /// Rebuildable cache snapshot persisted separately from canonical state.
@@ -133,17 +76,6 @@ struct WorkspacePersistor {
         var notificationCountByWorktreeId: [UUID: Int]
         var sourceRevision: UInt64
         var lastRebuiltAt: Date?
-
-        private enum CodingKeys: String, CodingKey {
-            case schemaVersion
-            case workspaceId
-            case repoEnrichmentByRepoId
-            case worktreeEnrichmentByWorktreeId
-            case pullRequestCountByWorktreeId
-            case notificationCountByWorktreeId
-            case sourceRevision
-            case lastRebuiltAt
-        }
 
         init(
             workspaceId: UUID,
@@ -164,26 +96,6 @@ struct WorkspacePersistor {
             self.lastRebuiltAt = lastRebuiltAt
         }
 
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-
-            schemaVersion =
-                try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
-
-            workspaceId = try container.decode(UUID.self, forKey: .workspaceId)
-
-            repoEnrichmentByRepoId =
-                try container.decodeIfPresent([UUID: RepoEnrichment].self, forKey: .repoEnrichmentByRepoId) ?? [:]
-            worktreeEnrichmentByWorktreeId =
-                try container.decodeIfPresent([UUID: WorktreeEnrichment].self, forKey: .worktreeEnrichmentByWorktreeId)
-                ?? [:]
-            pullRequestCountByWorktreeId =
-                try container.decodeIfPresent([UUID: Int].self, forKey: .pullRequestCountByWorktreeId) ?? [:]
-            notificationCountByWorktreeId =
-                try container.decodeIfPresent([UUID: Int].self, forKey: .notificationCountByWorktreeId) ?? [:]
-            sourceRevision = try container.decodeIfPresent(UInt64.self, forKey: .sourceRevision) ?? 0
-            lastRebuiltAt = try container.decodeIfPresent(Date.self, forKey: .lastRebuiltAt)
-        }
     }
 
     /// UI preference snapshot persisted separately from canonical and cache state.
@@ -210,25 +122,6 @@ struct WorkspacePersistor {
             self.isFilterVisible = isFilterVisible
         }
 
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            schemaVersion =
-                try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
-            workspaceId = try container.decode(UUID.self, forKey: .workspaceId)
-            expandedGroups =
-                try container.decodeIfPresent(
-                    Set<String>.self, forKey: .expandedGroups
-                ) ?? []
-            checkoutColors =
-                try container.decodeIfPresent(
-                    [String: String].self, forKey: .checkoutColors
-                ) ?? [:]
-            filterText = try container.decodeIfPresent(String.self, forKey: .filterText) ?? ""
-            isFilterVisible =
-                try container.decodeIfPresent(
-                    Bool.self, forKey: .isFilterVisible
-                ) ?? false
-        }
     }
 
     // MARK: - Properties
