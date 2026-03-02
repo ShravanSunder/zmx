@@ -7,19 +7,19 @@ final class WorkspaceCacheCoordinator {
 
     private let bus: EventBus<RuntimeEnvelope>
     private let workspaceStore: WorkspaceStore
-    private let cacheStore: WorkspaceCacheStore
+    private let repoCache: WorkspaceRepoCache
     private let scopeSyncHandler: @Sendable (ScopeChange) async -> Void
     private var consumeTask: Task<Void, Never>?
 
     init(
         bus: EventBus<RuntimeEnvelope> = PaneRuntimeEventBus.shared,
         workspaceStore: WorkspaceStore,
-        cacheStore: WorkspaceCacheStore,
+        repoCache: WorkspaceRepoCache,
         scopeSyncHandler: @escaping @Sendable (ScopeChange) async -> Void
     ) {
         self.bus = bus
         self.workspaceStore = workspaceStore
-        self.cacheStore = cacheStore
+        self.repoCache = repoCache
         self.scopeSyncHandler = scopeSyncHandler
     }
 
@@ -63,10 +63,10 @@ final class WorkspaceCacheCoordinator {
             let exists = workspaceStore.repos.contains { $0.repoPath == repoPath }
             if !exists {
                 let repo = workspaceStore.addRepo(at: repoPath)
-                cacheStore.setRepoEnrichment(.unresolved(repoId: repo.id))
+                repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
             } else if let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) {
-                if cacheStore.repoEnrichmentByRepoId[repo.id] == nil {
-                    cacheStore.setRepoEnrichment(.unresolved(repoId: repo.id))
+                if repoCache.repoEnrichmentByRepoId[repo.id] == nil {
+                    repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
                 }
                 if workspaceStore.isRepoUnavailable(repo.id) {
                     _ = workspaceStore.reassociateRepo(
@@ -85,7 +85,7 @@ final class WorkspaceCacheCoordinator {
                         "Repo removed at path=\(repoPath.path, privacy: .public); orphaned \(orphanedPaneIds.count, privacy: .public) pane(s)"
                     )
                 }
-                cacheStore.removeRepo(repo.id)
+                repoCache.removeRepo(repo.id)
                 Task { [weak self] in
                     await self?.syncScope(.unregisterForgeRepo(repoId: repo.id))
                 }
@@ -114,7 +114,7 @@ final class WorkspaceCacheCoordinator {
             guard let repo = workspaceStore.repos.first(where: { $0.id == repoId }) else { return }
             let worktrees = repo.worktrees.filter { $0.id != worktreeId }
             workspaceStore.reconcileDiscoveredWorktrees(repo.id, worktrees: worktrees)
-            cacheStore.removeWorktree(worktreeId)
+            repoCache.removeWorktree(worktreeId)
         }
     }
 
@@ -129,10 +129,10 @@ final class WorkspaceCacheCoordinator {
                     branch: snapshot.branch ?? "",
                     snapshot: snapshot
                 )
-                cacheStore.setWorktreeEnrichment(enrichment)
+                repoCache.setWorktreeEnrichment(enrichment)
             case .branchChanged(let worktreeId, let repoId, _, let to):
                 var enrichment =
-                    cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]
+                    repoCache.worktreeEnrichmentByWorktreeId[worktreeId]
                     ?? WorktreeEnrichment(
                         worktreeId: worktreeId,
                         repoId: repoId,
@@ -140,11 +140,11 @@ final class WorkspaceCacheCoordinator {
                     )
                 enrichment.branch = to
                 enrichment.updatedAt = Date()
-                cacheStore.setWorktreeEnrichment(enrichment)
+                repoCache.setWorktreeEnrichment(enrichment)
             case .originChanged(let repoId, _, let to):
                 let trimmedOrigin = to.trimmingCharacters(in: .whitespacesAndNewlines)
                 let upstream: String?
-                if case .some(.resolved(_, let raw, _, _)) = cacheStore.repoEnrichmentByRepoId[repoId] {
+                if case .some(.resolved(_, let raw, _, _)) = repoCache.repoEnrichmentByRepoId[repoId] {
                     upstream = raw.upstream
                 } else {
                     upstream = nil
@@ -178,7 +178,7 @@ final class WorkspaceCacheCoordinator {
                         updatedAt: Date()
                     )
                 }
-                cacheStore.setRepoEnrichment(enrichment)
+                repoCache.setRepoEnrichment(enrichment)
             case .worktreeDiscovered, .worktreeRemoved, .diffAvailable:
                 break
             }
@@ -186,10 +186,10 @@ final class WorkspaceCacheCoordinator {
             switch forgeEvent {
             case .pullRequestCountsChanged(let repoId, let countsByBranch):
                 // Branch-to-worktree mapping is resolved through current enrichment branch values.
-                for (worktreeId, enrichment) in cacheStore.worktreeEnrichmentByWorktreeId
+                for (worktreeId, enrichment) in repoCache.worktreeEnrichmentByWorktreeId
                 where enrichment.repoId == repoId {
                     if let count = countsByBranch[enrichment.branch] {
-                        cacheStore.setPullRequestCount(count, for: worktreeId)
+                        repoCache.setPullRequestCount(count, for: worktreeId)
                     }
                 }
             case .refreshFailed(let repoId, let error):

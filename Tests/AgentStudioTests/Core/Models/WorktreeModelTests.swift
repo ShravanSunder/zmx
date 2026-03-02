@@ -6,56 +6,6 @@ import Testing
 @Suite(.serialized)
 final class WorktreeModelTests {
 
-    // MARK: - AgentType Properties
-
-    @Test
-
-    func test_agentType_displayName_claude() {
-        // Assert
-        #expect(AgentType.claude.displayName == "Claude Code")
-    }
-
-    @Test
-
-    func test_agentType_displayName_allCasesNonEmpty() {
-        // Assert
-        for agent in AgentType.allCases {
-            #expect(!(agent.displayName.isEmpty))
-        }
-    }
-
-    @Test
-
-    func test_agentType_shortName_allCasesNonEmpty() {
-        // Assert
-        for agent in AgentType.allCases {
-            #expect(!(agent.shortName.isEmpty))
-        }
-    }
-
-    @Test
-
-    func test_agentType_command_customIsEmpty() {
-        // Assert
-        #expect(AgentType.custom.command.isEmpty)
-    }
-
-    @Test
-
-    func test_agentType_command_nonCustomAreNonEmpty() {
-        // Assert
-        for agent in AgentType.allCases where agent != .custom {
-            #expect(!(agent.command.isEmpty))
-        }
-    }
-
-    @Test
-
-    func test_agentType_caseIterable_hasFiveCases() {
-        // Assert
-        #expect(AgentType.allCases.count == 5)
-    }
-
     // MARK: - Worktree Codable
 
     @Test

@@ -44,7 +44,6 @@ func makePane(
     id: UUID = UUIDv7.generate(),
     source: TerminalSource = .floating(workingDirectory: nil, title: nil),
     title: String = "Terminal",
-    agent: AgentType? = nil,
     provider: SessionProvider = .zmx,
     lifetime: SessionLifetime = .persistent,
     residency: SessionResidency = .active
@@ -52,7 +51,7 @@ func makePane(
     Pane(
         id: id,
         content: .terminal(TerminalState(provider: provider, lifetime: lifetime)),
-        metadata: PaneMetadata(source: .init(source), title: title, agentType: agent),
+        metadata: PaneMetadata(source: .init(source), title: title),
         residency: residency
     )
 }

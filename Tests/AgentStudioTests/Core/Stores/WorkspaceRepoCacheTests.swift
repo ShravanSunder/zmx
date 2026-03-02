@@ -5,11 +5,11 @@ import Testing
 
 @Suite(.serialized)
 @MainActor
-final class WorkspaceCacheStoreTests {
+final class WorkspaceRepoCacheTests {
 
     @Test
     func setRepoAndWorktreeEnrichment_persistsInMemoryState() {
-        let store = WorkspaceCacheStore()
+        let store = WorkspaceRepoCache()
         let repoId = UUID()
         let worktreeId = UUID()
 
@@ -39,7 +39,7 @@ final class WorkspaceCacheStoreTests {
 
     @Test
     func removeRepo_prunesWorktreeAndCounters() {
-        let store = WorkspaceCacheStore()
+        let store = WorkspaceRepoCache()
         let repoId = UUID()
         let worktreeId = UUID()
 
@@ -58,7 +58,7 @@ final class WorkspaceCacheStoreTests {
 
     @Test
     func markRebuilt_updatesRevisionAndTimestamp() {
-        let store = WorkspaceCacheStore()
+        let store = WorkspaceRepoCache()
         let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
 
         store.markRebuilt(sourceRevision: 42, at: timestamp)

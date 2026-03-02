@@ -331,15 +331,6 @@ final class WorkspaceStore {
         markDirty()
     }
 
-    func updatePaneAgent(_ paneId: UUID, agent: AgentType?) {
-        guard panes[paneId] != nil else {
-            storeLogger.warning("updatePaneAgent: pane \(paneId) not found")
-            return
-        }
-        panes[paneId]!.metadata.updateAgentType(agent)
-        markDirty()
-    }
-
     func updatePaneWebviewState(_ paneId: UUID, state: WebviewState) {
         guard panes[paneId] != nil else {
             storeLogger.warning("updatePaneWebviewState: pane \(paneId) not found")

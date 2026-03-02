@@ -36,8 +36,6 @@ enum DynamicViewProjector {
             )
         case .byCWD:
             grouped = groupByCWD(panes: activePanes)
-        case .byAgentType:
-            grouped = groupByAgentType(panes: activePanes)
         case .byParentFolder:
             grouped = groupByParentFolder(panes: activePanes, repos: repos)
         }
@@ -141,27 +139,6 @@ enum DynamicViewProjector {
         var result = groups.map { (key: $0.key, name: $0.value.name, paneIds: $0.value.paneIds) }
         if !ungrouped.isEmpty {
             result.append((key: "ungrouped", name: "No CWD", paneIds: ungrouped))
-        }
-        return result
-    }
-
-    private static func groupByAgentType(
-        panes: [Pane]
-    ) -> [(key: String, name: String, paneIds: [UUID])] {
-        var groups: [String: (name: String, paneIds: [UUID])] = [:]
-        var ungrouped: [UUID] = []
-
-        for pane in panes {
-            if let agent = pane.agent {
-                groups[agent.rawValue, default: (name: agent.displayName, paneIds: [])].paneIds.append(pane.id)
-            } else {
-                ungrouped.append(pane.id)
-            }
-        }
-
-        var result = groups.map { (key: $0.key, name: $0.value.name, paneIds: $0.value.paneIds) }
-        if !ungrouped.isEmpty {
-            result.append((key: "ungrouped", name: "No Agent", paneIds: ungrouped))
         }
         return result
     }

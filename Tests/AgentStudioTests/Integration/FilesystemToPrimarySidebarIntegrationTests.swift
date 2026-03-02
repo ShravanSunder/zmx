@@ -34,7 +34,7 @@ struct FilesystemToPrimarySidebarIntegrationTests {
             guard !intake.financeRepoIds.isEmpty else { return false }
             for repoId in intake.financeRepoIds {
                 guard
-                    case .some(.resolved(_, _, let identity, _)) = testSystem.cacheStore.repoEnrichmentByRepoId[repoId]
+                    case .some(.resolved(_, _, let identity, _)) = testSystem.repoCache.repoEnrichmentByRepoId[repoId]
                 else {
                     return false
                 }
@@ -52,16 +52,16 @@ struct FilesystemToPrimarySidebarIntegrationTests {
                 return false
             }
             return
-                testSystem.cacheStore.pullRequestCountByWorktreeId[primaryBranchId] == 1
-                && testSystem.cacheStore.pullRequestCountByWorktreeId[transactionTableId] == 2
-                && testSystem.cacheStore.pullRequestCountByWorktreeId[rlvrForkingId] == 3
+                testSystem.repoCache.pullRequestCountByWorktreeId[primaryBranchId] == 1
+                && testSystem.repoCache.pullRequestCountByWorktreeId[transactionTableId] == 2
+                && testSystem.repoCache.pullRequestCountByWorktreeId[rlvrForkingId] == 3
         }
         #expect(prCountsConverged)
 
         let sidebarRepos = testSystem.workspaceStore.repos.map(SidebarRepo.init(repo:))
         let metadataByRepoId = RepoSidebarContentView.buildRepoMetadata(
             repos: sidebarRepos,
-            repoEnrichmentByRepoId: testSystem.cacheStore.repoEnrichmentByRepoId
+            repoEnrichmentByRepoId: testSystem.repoCache.repoEnrichmentByRepoId
         )
         let groups = SidebarRepoGrouping.buildGroups(
             repos: sidebarRepos,
@@ -78,7 +78,7 @@ struct FilesystemToPrimarySidebarIntegrationTests {
             let visibleBranchLabels = allFinanceWorktrees.map {
                 RepoSidebarContentView.resolvedBranchName(
                     worktree: $0,
-                    enrichment: testSystem.cacheStore.worktreeEnrichmentByWorktreeId[$0.id]
+                    enrichment: testSystem.repoCache.worktreeEnrichmentByWorktreeId[$0.id]
                 )
             }
             #expect(visibleBranchLabels.contains("master"))
@@ -93,7 +93,7 @@ struct FilesystemToPrimarySidebarIntegrationTests {
 
     private struct IntegratedTestSystem {
         let workspaceStore: WorkspaceStore
-        let cacheStore: WorkspaceCacheStore
+        let repoCache: WorkspaceRepoCache
         let coordinator: WorkspaceCacheCoordinator
         let pipeline: FilesystemGitPipeline
     }
@@ -108,7 +108,7 @@ struct FilesystemToPrimarySidebarIntegrationTests {
     ) -> IntegratedTestSystem {
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let pipeline = FilesystemGitPipeline(
             bus: bus,
             gitWorkingTreeProvider: StubGitWorkingTreeStatusProvider.stub { rootPath in
@@ -140,7 +140,7 @@ struct FilesystemToPrimarySidebarIntegrationTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { [weak pipeline] scopeChange in
                 guard let pipeline else { return }
                 await pipeline.applyScopeChange(scopeChange)
@@ -148,7 +148,7 @@ struct FilesystemToPrimarySidebarIntegrationTests {
         )
         return IntegratedTestSystem(
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             coordinator: coordinator,
             pipeline: pipeline
         )

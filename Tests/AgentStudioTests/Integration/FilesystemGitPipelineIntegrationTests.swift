@@ -42,11 +42,11 @@ struct FilesystemGitPipelineIntegrationTests {
         let worktreeRootsByWorktreeId: [UUID: URL] = [worktreeId: rootPath]
 
         let paneProjectionStore = PaneFilesystemProjectionStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let cacheCoordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: store,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
         let observed = ObservedFilesystemGitEvents()
@@ -87,7 +87,7 @@ struct FilesystemGitPipelineIntegrationTests {
         #expect(projectionConverged)
 
         let gitStoreConverged = await eventually("workspace cache enrichment should update") {
-            guard let snapshot = cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot else { return false }
+            guard let snapshot = repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot else { return false }
             return snapshot.summary.changed == 2
                 && snapshot.summary.staged == 1
                 && snapshot.summary.untracked == 1
@@ -139,11 +139,11 @@ struct FilesystemGitPipelineIntegrationTests {
         let store = WorkspaceStore(persistor: WorkspacePersistor(workspacesDir: workspaceDir))
         store.restore()
 
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let cacheCoordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: store,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
         cacheCoordinator.startConsuming()
@@ -152,7 +152,7 @@ struct FilesystemGitPipelineIntegrationTests {
         await pipeline.register(worktreeId: worktreeId, repoId: repoId, rootPath: rootPath)
 
         let initialSnapshotArrived = await eventually("initial periodic snapshot should arrive") {
-            guard let snapshot = cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot else { return false }
+            guard let snapshot = repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot else { return false }
             return snapshot.summary.aheadCount == 0 && snapshot.summary.behindCount == 0
         }
         #expect(initialSnapshotArrived)
@@ -175,7 +175,7 @@ struct FilesystemGitPipelineIntegrationTests {
         )
 
         let aheadUpdateArrived = await eventually("periodic refresh should update ahead count") {
-            cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot?.summary.aheadCount == 1
+            repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot?.summary.aheadCount == 1
         }
         #expect(aheadUpdateArrived)
 
@@ -197,7 +197,7 @@ struct FilesystemGitPipelineIntegrationTests {
         )
 
         let behindUpdateArrived = await eventually("periodic refresh should update behind count") {
-            cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot?.summary.behindCount == 2
+            repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot?.summary.behindCount == 2
         }
         #expect(behindUpdateArrived)
 
@@ -242,11 +242,11 @@ struct FilesystemGitPipelineIntegrationTests {
             return
         }
 
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
         coordinator.startConsuming()
@@ -258,7 +258,7 @@ struct FilesystemGitPipelineIntegrationTests {
             "initial registration should produce a git snapshot before origin retry",
             maxAttempts: 600
         ) {
-            cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main"
+            repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main"
         }
         #expect(initialSnapshotConverged)
 
@@ -269,7 +269,7 @@ struct FilesystemGitPipelineIntegrationTests {
             "git config change should trigger origin retry and remote identity",
             maxAttempts: 600
         ) {
-            guard case .some(.resolved(_, let raw, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id]
+            guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
             else {
                 return false
             }

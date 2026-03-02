@@ -4,7 +4,7 @@ import Observation
 /// Rebuildable derived workspace metadata used by sidebar and runtime projections.
 @Observable
 @MainActor
-final class WorkspaceCacheStore {
+final class WorkspaceRepoCache {
     private(set) var repoEnrichmentByRepoId: [UUID: RepoEnrichment] = [:]
     private(set) var worktreeEnrichmentByWorktreeId: [UUID: WorktreeEnrichment] = [:]
     private(set) var pullRequestCountByWorktreeId: [UUID: Int] = [:]

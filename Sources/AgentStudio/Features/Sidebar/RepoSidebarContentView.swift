@@ -8,7 +8,7 @@ import SwiftUI
 @MainActor
 struct RepoSidebarContentView: View {
     let store: WorkspaceStore
-    let cacheStore: WorkspaceCacheStore
+    let repoCache: WorkspaceRepoCache
     let uiStore: WorkspaceUIStore
 
     @State private var expandedGroups: Set<String> = []
@@ -26,11 +26,11 @@ struct RepoSidebarContentView: View {
 
     init(
         store: WorkspaceStore,
-        cacheStore: WorkspaceCacheStore = WorkspaceCacheStore(),
+        repoCache: WorkspaceRepoCache = WorkspaceRepoCache(),
         uiStore: WorkspaceUIStore = WorkspaceUIStore()
     ) {
         self.store = store
-        self.cacheStore = cacheStore
+        self.repoCache = repoCache
         self.uiStore = uiStore
     }
 
@@ -54,7 +54,7 @@ struct RepoSidebarContentView: View {
     private var repoMetadataById: [UUID: RepoIdentityMetadata] {
         Self.buildRepoMetadata(
             repos: sidebarRepos,
-            repoEnrichmentByRepoId: cacheStore.repoEnrichmentByRepoId
+            repoEnrichmentByRepoId: repoCache.repoEnrichmentByRepoId
         )
     }
 
@@ -68,8 +68,8 @@ struct RepoSidebarContentView: View {
 
     private var worktreeStatusById: [UUID: GitBranchStatus] {
         Self.mergeBranchStatuses(
-            worktreeEnrichmentsByWorktreeId: cacheStore.worktreeEnrichmentByWorktreeId,
-            pullRequestCountsByWorktreeId: cacheStore.pullRequestCountByWorktreeId
+            worktreeEnrichmentsByWorktreeId: repoCache.worktreeEnrichmentByWorktreeId,
+            pullRequestCountsByWorktreeId: repoCache.pullRequestCountByWorktreeId
         )
     }
 
@@ -93,7 +93,7 @@ struct RepoSidebarContentView: View {
             filterText = uiStore.filterText
             debouncedQuery = uiStore.filterText
             checkoutColorByRepoId = uiStore.checkoutColors
-            notificationCountsByWorktreeId = cacheStore.notificationCountByWorktreeId
+            notificationCountsByWorktreeId = repoCache.notificationCountByWorktreeId
         }
         .task {
             let stream = await AppEventBus.shared.subscribe()
@@ -380,7 +380,7 @@ struct RepoSidebarContentView: View {
     private func branchName(for worktree: Worktree) -> String {
         Self.resolvedBranchName(
             worktree: worktree,
-            enrichment: cacheStore.worktreeEnrichmentByWorktreeId[worktree.id]
+            enrichment: repoCache.worktreeEnrichmentByWorktreeId[worktree.id]
         )
     }
 

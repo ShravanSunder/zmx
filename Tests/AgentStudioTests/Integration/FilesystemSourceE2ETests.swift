@@ -43,11 +43,11 @@ extension E2ESerializedTests {
                     processExecutor: DefaultProcessExecutor(timeout: 5))
             )
             let paneProjectionStore = PaneFilesystemProjectionStore()
-            let cacheStore = WorkspaceCacheStore()
+            let repoCache = WorkspaceRepoCache()
             let cacheCoordinator = WorkspaceCacheCoordinator(
                 bus: paneEventBus,
                 workspaceStore: store,
-                cacheStore: cacheStore,
+                repoCache: repoCache,
                 scopeSyncHandler: { _ in }
             )
             cacheCoordinator.startConsuming()
@@ -73,7 +73,7 @@ extension E2ESerializedTests {
             )
 
             await eventually("workspace cache git snapshot should update") {
-                guard let snapshot = cacheStore.worktreeEnrichmentByWorktreeId[worktree.id]?.snapshot else {
+                guard let snapshot = repoCache.worktreeEnrichmentByWorktreeId[worktree.id]?.snapshot else {
                     return false
                 }
                 return snapshot.summary.changed >= 1 && snapshot.summary.untracked >= 1

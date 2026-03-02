@@ -204,21 +204,6 @@ final class WorkspaceStoreTests {
 
     @Test
 
-    func test_updatePaneAgent() {
-        // Arrange
-        let pane = store.createPane(
-            source: .floating(workingDirectory: nil, title: nil)
-        )
-
-        // Act
-        store.updatePaneAgent(pane.id, agent: .claude)
-
-        // Assert
-        #expect(store.pane(pane.id)?.agent == .claude)
-    }
-
-    @Test
-
     func test_setResidency() {
         // Arrange
         let pane = store.createPane(

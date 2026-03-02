@@ -10,11 +10,11 @@ struct PrimarySidebarPipelineIntegrationTests {
     func twoReposWithSharedRemoteIdentityConverge() async {
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let (forgeActor, coordinator, projector) = makePipelineActors(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            repoCache: repoCache
         )
 
         coordinator.startConsuming()
@@ -34,10 +34,10 @@ struct PrimarySidebarPipelineIntegrationTests {
         await postBranchChanged(bus: bus, worktreeId: worktreeB, repoId: repoB.id, from: "seed", to: "main")
 
         let identityConverged = await eventually("repo identity should resolve for both repos") {
-            guard case .some(.resolved(_, _, let identityA, _)) = cacheStore.repoEnrichmentByRepoId[repoA.id] else {
+            guard case .some(.resolved(_, _, let identityA, _)) = repoCache.repoEnrichmentByRepoId[repoA.id] else {
                 return false
             }
-            guard case .some(.resolved(_, _, let identityB, _)) = cacheStore.repoEnrichmentByRepoId[repoB.id] else {
+            guard case .some(.resolved(_, _, let identityB, _)) = repoCache.repoEnrichmentByRepoId[repoB.id] else {
                 return false
             }
             return identityA.groupKey == "remote:askluna/agent-studio" && identityA.groupKey == identityB.groupKey
@@ -45,8 +45,8 @@ struct PrimarySidebarPipelineIntegrationTests {
         #expect(identityConverged)
 
         let pullRequestCountsConverged = await eventually("forge pull request counts should map to both worktrees") {
-            cacheStore.pullRequestCountByWorktreeId[worktreeA] == 1
-                && cacheStore.pullRequestCountByWorktreeId[worktreeB] == 1
+            repoCache.pullRequestCountByWorktreeId[worktreeA] == 1
+                && repoCache.pullRequestCountByWorktreeId[worktreeB] == 1
         }
         #expect(pullRequestCountsConverged)
 
@@ -58,11 +58,11 @@ struct PrimarySidebarPipelineIntegrationTests {
     func messageDrivenRepoDiscoverySeedsUnresolvedBeforeResolution() async {
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let (forgeActor, coordinator, projector) = makePipelineActors(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore
+            repoCache: repoCache
         )
 
         coordinator.startConsuming()
@@ -77,7 +77,7 @@ struct PrimarySidebarPipelineIntegrationTests {
             guard let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) else {
                 return false
             }
-            return cacheStore.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id)
+            return repoCache.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id)
         }
         #expect(unresolvedSeeded)
 
@@ -99,7 +99,7 @@ struct PrimarySidebarPipelineIntegrationTests {
 
         let resolvedIdentity = await eventually("worktree registration should converge unresolved to resolved identity")
         {
-            guard case .some(.resolved(_, let raw, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id]
+            guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
             else {
                 return false
             }
@@ -116,7 +116,7 @@ struct PrimarySidebarPipelineIntegrationTests {
     func messageDrivenOriginAndBranchEventsDoNotDoubleInvokeForge() async {
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let callCounter = ForgeProviderCallCounter()
         let forgeActor = ForgeActor(
             bus: bus,
@@ -134,7 +134,7 @@ struct PrimarySidebarPipelineIntegrationTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { change in
                 switch change {
                 case .registerForgeRepo(let repoId, let remote):
@@ -176,11 +176,11 @@ struct PrimarySidebarPipelineIntegrationTests {
     @Test("origin change updates resolved identity grouping")
     func originChangeUpdatesResolvedIdentityGrouping() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -209,7 +209,7 @@ struct PrimarySidebarPipelineIntegrationTests {
             )
         )
 
-        guard case .some(.resolved(_, _, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id] else {
+        guard case .some(.resolved(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
             Issue.record("Expected resolved enrichment")
             return
         }
@@ -240,7 +240,7 @@ struct PrimarySidebarPipelineIntegrationTests {
 
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let financeRemote = "git@github.com:askluna/askluna-finance.git"
         let pathStatusByRootPath = makePathStatusByRootPath(
             root: tempRoot,
@@ -250,7 +250,7 @@ struct PrimarySidebarPipelineIntegrationTests {
         let (forgeActor, coordinator, projector) = makePipelineActors(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             gitStatusByRootPath: pathStatusByRootPath
         )
 
@@ -279,7 +279,7 @@ struct PrimarySidebarPipelineIntegrationTests {
         let identityConverged = await eventually("all finance repos should share one remote group key") {
             guard !financeRepoIds.isEmpty else { return false }
             for repoId in financeRepoIds {
-                guard case .some(.resolved(_, _, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repoId] else {
+                guard case .some(.resolved(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repoId] else {
                     return false
                 }
                 guard identity.groupKey == "remote:askluna/askluna-finance" else { return false }
@@ -296,16 +296,16 @@ struct PrimarySidebarPipelineIntegrationTests {
                 return false
             }
             return
-                cacheStore.pullRequestCountByWorktreeId[primaryBranchId] == 1
-                && cacheStore.pullRequestCountByWorktreeId[transactionTableId] == 2
-                && cacheStore.pullRequestCountByWorktreeId[rlvrForkingId] == 3
+                repoCache.pullRequestCountByWorktreeId[primaryBranchId] == 1
+                && repoCache.pullRequestCountByWorktreeId[transactionTableId] == 2
+                && repoCache.pullRequestCountByWorktreeId[rlvrForkingId] == 3
         }
         #expect(pullRequestCountsConverged)
 
         let sidebarRepos = workspaceStore.repos.map(SidebarRepo.init(repo:))
         let metadata = RepoSidebarContentView.buildRepoMetadata(
             repos: sidebarRepos,
-            repoEnrichmentByRepoId: cacheStore.repoEnrichmentByRepoId
+            repoEnrichmentByRepoId: repoCache.repoEnrichmentByRepoId
         )
         let groups = SidebarRepoGrouping.buildGroups(
             repos: sidebarRepos,
@@ -330,7 +330,7 @@ struct PrimarySidebarPipelineIntegrationTests {
     private func makePipelineActors(
         bus: EventBus<RuntimeEnvelope>,
         workspaceStore: WorkspaceStore,
-        cacheStore: WorkspaceCacheStore,
+        repoCache: WorkspaceRepoCache,
         gitStatusByRootPath: [String: GitWorkingTreeStatus]? = nil
     ) -> (ForgeActor, WorkspaceCacheCoordinator, GitWorkingDirectoryProjector) {
         let forgeActor = ForgeActor(
@@ -357,7 +357,7 @@ struct PrimarySidebarPipelineIntegrationTests {
         let coordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { change in
                 switch change {
                 case .registerForgeRepo(let repoId, let remote):

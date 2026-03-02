@@ -17,11 +17,11 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
     @Test("repoRemoved marks panes orphaned and prunes cache while preserving canonical identities")
     func repoRemovedOrphansPanesAndPreservesRepoIdentity() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -40,7 +40,7 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
             source: .worktree(worktreeId: persistedMainWorktreeId, repoId: repo.id)
         )
 
-        cacheStore.setRepoEnrichment(
+        repoCache.setRepoEnrichment(
             .resolved(
                 repoId: repo.id,
                 raw: RawRepoOrigin(origin: "git@github.com:acme/repo.git", upstream: nil),
@@ -53,7 +53,7 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
                 updatedAt: Date()
             )
         )
-        cacheStore.setWorktreeEnrichment(
+        repoCache.setWorktreeEnrichment(
             WorktreeEnrichment(
                 worktreeId: persistedMainWorktreeId,
                 repoId: repo.id,
@@ -70,10 +70,10 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         #expect(workspaceStore.repos.count == 1)
         #expect(workspaceStore.repos[0].id == repo.id)
         #expect(workspaceStore.isRepoUnavailable(repo.id))
-        #expect(cacheStore.repoEnrichmentByRepoId[repo.id] == nil)
-        #expect(cacheStore.worktreeEnrichmentByWorktreeId[persistedMainWorktreeId] == nil)
-        #expect(cacheStore.pullRequestCountByWorktreeId[persistedMainWorktreeId] == nil)
-        #expect(cacheStore.notificationCountByWorktreeId[persistedMainWorktreeId] == nil)
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == nil)
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[persistedMainWorktreeId] == nil)
+        #expect(repoCache.pullRequestCountByWorktreeId[persistedMainWorktreeId] == nil)
+        #expect(repoCache.notificationCountByWorktreeId[persistedMainWorktreeId] == nil)
         #expect(
             workspaceStore.pane(pane.id)?.residency
                 == .orphaned(reason: .worktreeNotFound(path: repoPath.path))
@@ -83,11 +83,11 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
     @Test("re-association preserves UUID links and restores orphaned pane residency")
     func relocateRepoPreservesIdentity() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -140,11 +140,11 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
     @Test("repo rediscovery at same path clears unavailable state and restores orphaned panes")
     func rediscoveryAtSamePathRestoresRepoAvailability() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -183,11 +183,11 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
     @Test("re-association restores non-layout orphaned panes as backgrounded")
     func reassociationRestoresBackgroundedResidencyForNonLayoutPanes() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -237,11 +237,11 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
     @Test("repoRemoved does not overwrite pendingUndo residency")
     func repoRemovedPreservesPendingUndoResidency() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 

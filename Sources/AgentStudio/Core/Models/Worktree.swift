@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// A git worktree within a repo — structure-only.
 /// All enrichment data (branch, status) comes from WorkspaceRepoCache via the event bus.
@@ -35,55 +34,5 @@ struct Worktree: Codable, Identifiable, Hashable {
         self.name = try container.decode(String.self, forKey: .name)
         self.path = try container.decode(URL.self, forKey: .path)
         self.isMainWorktree = try container.decodeIfPresent(Bool.self, forKey: .isMainWorktree) ?? false
-    }
-}
-
-// MARK: - Agent Type
-
-enum AgentType: String, Codable, CaseIterable {
-    case claude
-    case codex
-    case gemini
-    case aider
-    case custom
-
-    var displayName: String {
-        switch self {
-        case .claude: return "Claude Code"
-        case .codex: return "Codex"
-        case .gemini: return "Gemini CLI"
-        case .aider: return "Aider"
-        case .custom: return "Custom"
-        }
-    }
-
-    var shortName: String {
-        switch self {
-        case .claude: return "CC"
-        case .codex: return "CX"
-        case .gemini: return "GM"
-        case .aider: return "AD"
-        case .custom: return "?"
-        }
-    }
-
-    var command: String {
-        switch self {
-        case .claude: return "claude"
-        case .codex: return "codex"
-        case .gemini: return "gemini"
-        case .aider: return "aider"
-        case .custom: return ""
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .claude: return .orange
-        case .codex: return .green
-        case .gemini: return .blue
-        case .aider: return .purple
-        case .custom: return .gray
-        }
     }
 }

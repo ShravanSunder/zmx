@@ -47,7 +47,6 @@ final class DynamicViewProjectorTests {
                 facets: PaneContextFacets(
                     cwd: URL(fileURLWithPath: "/Users/dev/projects/agent-studio/main")
                 ),
-                agentType: .claude
             )
         )
         let pane2 = Pane(
@@ -57,8 +56,7 @@ final class DynamicViewProjectorTests {
                 title: "agent-studio feature-x",
                 facets: PaneContextFacets(
                     cwd: URL(fileURLWithPath: "/Users/dev/projects/agent-studio/feature-x")
-                ),
-                agentType: .codex
+                )
             )
         )
         let pane3 = Pane(
@@ -68,8 +66,7 @@ final class DynamicViewProjectorTests {
                 title: "askluna main",
                 facets: PaneContextFacets(
                     cwd: URL(fileURLWithPath: "/Users/dev/projects/askluna/main")
-                ),
-                agentType: .claude
+                )
             )
         )
         let pane4 = Pane(
@@ -206,31 +203,6 @@ final class DynamicViewProjectorTests {
         #expect((noCWDGroup) != nil)
     }
 
-    // MARK: - By Agent Type
-
-    @Test
-
-    func test_byAgentType_groupsByAgent() {
-        let (panes, repos, repoEnrichments, worktreeEnrichments, tabs) = makeTestPanes()
-
-        let result = DynamicViewProjector.project(
-            viewType: .byAgentType,
-            panes: panes,
-            tabs: tabs,
-            repos: repos,
-            repoEnrichments: repoEnrichments,
-            worktreeEnrichments: worktreeEnrichments
-        )
-
-        let groupNames = Set(result.groups.map(\.name))
-        #expect(groupNames.contains("Claude Code"))  // pane1 + pane3
-        #expect(groupNames.contains("Codex"))  // pane2
-        #expect(groupNames.contains("No Agent"))  // pane4
-
-        let claudeGroup = result.groups.first { $0.name == "Claude Code" }!
-        #expect(claudeGroup.paneIds.count == 2)
-    }
-
     // MARK: - By Parent Folder
 
     @Test
@@ -354,13 +326,12 @@ final class DynamicViewProjectorTests {
         #expect(DynamicViewType.byRepo.displayName == "By Repo")
         #expect(DynamicViewType.byWorktree.displayName == "By Worktree")
         #expect(DynamicViewType.byCWD.displayName == "By CWD")
-        #expect(DynamicViewType.byAgentType.displayName == "By Agent Type")
         #expect(DynamicViewType.byParentFolder.displayName == "By Parent Folder")
     }
 
     @Test
 
     func test_dynamicViewType_allCases() {
-        #expect(DynamicViewType.allCases.count == 5)
+        #expect(DynamicViewType.allCases.count == 4)
     }
 }

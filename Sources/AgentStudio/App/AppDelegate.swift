@@ -55,7 +55,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Shared Services (created once at launch)
 
     private var store: WorkspaceStore!
-    private var workspaceCacheStore: WorkspaceCacheStore!
+    private var workspaceRepoCache: WorkspaceRepoCache!
     private var workspaceUIStore: WorkspaceUIStore!
     private var workspaceCacheCoordinator: WorkspaceCacheCoordinator!
     private var viewRegistry: ViewRegistry!
@@ -93,22 +93,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "store.restore complete tabs=\(store.tabs.count) panes=\(store.panes.count) activeTab=\(store.activeTabId?.uuidString ?? "nil")"
             )
         case .loadCacheStore:
-            workspaceCacheStore = WorkspaceCacheStore()
+            workspaceRepoCache = WorkspaceRepoCache()
             switch persistor.loadCache(for: store.workspaceId) {
             case .loaded(let cacheState):
                 for enrichment in cacheState.repoEnrichmentByRepoId.values {
-                    workspaceCacheStore.setRepoEnrichment(enrichment)
+                    workspaceRepoCache.setRepoEnrichment(enrichment)
                 }
                 for enrichment in cacheState.worktreeEnrichmentByWorktreeId.values {
-                    workspaceCacheStore.setWorktreeEnrichment(enrichment)
+                    workspaceRepoCache.setWorktreeEnrichment(enrichment)
                 }
                 for (worktreeId, count) in cacheState.pullRequestCountByWorktreeId {
-                    workspaceCacheStore.setPullRequestCount(count, for: worktreeId)
+                    workspaceRepoCache.setPullRequestCount(count, for: worktreeId)
                 }
                 for (worktreeId, count) in cacheState.notificationCountByWorktreeId {
-                    workspaceCacheStore.setNotificationCount(count, for: worktreeId)
+                    workspaceRepoCache.setNotificationCount(count, for: worktreeId)
                 }
-                workspaceCacheStore.markRebuilt(
+                workspaceRepoCache.markRebuilt(
                     sourceRevision: cacheState.sourceRevision,
                     at: cacheState.lastRebuiltAt ?? Date()
                 )
@@ -153,7 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             workspaceCacheCoordinator = WorkspaceCacheCoordinator(
                 bus: paneRuntimeBus,
                 workspaceStore: store,
-                cacheStore: workspaceCacheStore,
+                cacheStore: workspaceRepoCache,
                 scopeSyncHandler: { [weak pipeline] change in
                     guard let pipeline else { return }
                     await pipeline.applyScopeChange(change)
@@ -255,7 +255,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create main window
         mainWindowController = MainWindowController(
             store: store,
-            cacheStore: workspaceCacheStore,
+            cacheStore: workspaceRepoCache,
             uiStore: workspaceUIStore,
             actionExecutor: executor,
             tabBarAdapter: tabBarAdapter,
@@ -468,7 +468,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             mainWindowController = MainWindowController(
                 store: store,
-                cacheStore: workspaceCacheStore,
+                cacheStore: workspaceRepoCache,
                 uiStore: workspaceUIStore,
                 actionExecutor: executor,
                 tabBarAdapter: tabBarAdapter,
@@ -486,12 +486,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             try persistor.saveCache(
                 .init(
                     workspaceId: store.workspaceId,
-                    repoEnrichmentByRepoId: workspaceCacheStore.repoEnrichmentByRepoId,
-                    worktreeEnrichmentByWorktreeId: workspaceCacheStore.worktreeEnrichmentByWorktreeId,
-                    pullRequestCountByWorktreeId: workspaceCacheStore.pullRequestCountByWorktreeId,
-                    notificationCountByWorktreeId: workspaceCacheStore.notificationCountByWorktreeId,
-                    sourceRevision: workspaceCacheStore.sourceRevision,
-                    lastRebuiltAt: workspaceCacheStore.lastRebuiltAt
+                    repoEnrichmentByRepoId: workspaceRepoCache.repoEnrichmentByRepoId,
+                    worktreeEnrichmentByWorktreeId: workspaceRepoCache.worktreeEnrichmentByWorktreeId,
+                    pullRequestCountByWorktreeId: workspaceRepoCache.pullRequestCountByWorktreeId,
+                    notificationCountByWorktreeId: workspaceRepoCache.notificationCountByWorktreeId,
+                    sourceRevision: workspaceRepoCache.sourceRevision,
+                    lastRebuiltAt: workspaceRepoCache.lastRebuiltAt
                 )
             )
         } catch {

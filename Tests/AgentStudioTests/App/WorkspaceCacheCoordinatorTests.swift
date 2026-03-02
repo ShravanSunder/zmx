@@ -18,11 +18,11 @@ final class WorkspaceCacheCoordinatorTests {
     @Test
     func topology_repoDiscovered_addsRepoToWorkspaceStore() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -37,17 +37,17 @@ final class WorkspaceCacheCoordinatorTests {
             Issue.record("Expected discovered repo to be added")
             return
         }
-        #expect(cacheStore.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id))
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id))
     }
 
     @Test
     func topology_worktreeRegistered_unknownRepo_isIgnored() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -70,11 +70,11 @@ final class WorkspaceCacheCoordinatorTests {
     @Test
     func topology_repoDiscovered_duplicatePath_doesNotDuplicateRepo() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -92,11 +92,11 @@ final class WorkspaceCacheCoordinatorTests {
     @Test
     func topology_worktreeUnregistered_unknownRepo_isIgnored() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -117,11 +117,11 @@ final class WorkspaceCacheCoordinatorTests {
     @Test
     func topology_worktreeUnregistered_prunesWorktreeCaches() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -132,15 +132,15 @@ final class WorkspaceCacheCoordinatorTests {
             return
         }
 
-        cacheStore.setWorktreeEnrichment(
+        repoCache.setWorktreeEnrichment(
             WorktreeEnrichment(
                 worktreeId: worktreeId,
                 repoId: repo.id,
                 branch: "main"
             )
         )
-        cacheStore.setPullRequestCount(5, for: worktreeId)
-        cacheStore.setNotificationCount(2, for: worktreeId)
+        repoCache.setPullRequestCount(5, for: worktreeId)
+        repoCache.setNotificationCount(2, for: worktreeId)
 
         coordinator.handleTopology(
             SystemEnvelope.test(
@@ -150,19 +150,19 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
-        #expect(cacheStore.worktreeEnrichmentByWorktreeId[worktreeId] == nil)
-        #expect(cacheStore.pullRequestCountByWorktreeId[worktreeId] == nil)
-        #expect(cacheStore.notificationCountByWorktreeId[worktreeId] == nil)
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId] == nil)
+        #expect(repoCache.pullRequestCountByWorktreeId[worktreeId] == nil)
+        #expect(repoCache.notificationCountByWorktreeId[worktreeId] == nil)
     }
 
     @Test
     func enrichment_snapshotChanged_updatesWorktreeCache() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -185,18 +185,18 @@ final class WorkspaceCacheCoordinatorTests {
 
         coordinator.handleEnrichment(envelope)
 
-        #expect(cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main")
-        #expect(cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.repoId == repoId)
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main")
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.repoId == repoId)
     }
 
     @Test
     func enrichment_branchChanged_preservesExistingSnapshot() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -209,7 +209,7 @@ final class WorkspaceCacheCoordinatorTests {
             summary: GitWorkingTreeSummary(changed: 2, staged: 1, untracked: 3),
             branch: "main"
         )
-        cacheStore.setWorktreeEnrichment(
+        repoCache.setWorktreeEnrichment(
             WorktreeEnrichment(
                 worktreeId: worktreeId,
                 repoId: repoId,
@@ -229,18 +229,18 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
-        #expect(cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "feature/new")
-        #expect(cacheStore.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot == snapshot)
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "feature/new")
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot == snapshot)
     }
 
     @Test
     func enrichment_pullRequestCountsChanged_mapsByBranch() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -248,14 +248,14 @@ final class WorkspaceCacheCoordinatorTests {
         let worktreeId = UUID()
         let otherRepoId = UUID()
         let otherWorktreeId = UUID()
-        cacheStore.setWorktreeEnrichment(
+        repoCache.setWorktreeEnrichment(
             WorktreeEnrichment(
                 worktreeId: worktreeId,
                 repoId: repoId,
                 branch: "feature/runtime"
             )
         )
-        cacheStore.setWorktreeEnrichment(
+        repoCache.setWorktreeEnrichment(
             WorktreeEnrichment(
                 worktreeId: otherWorktreeId,
                 repoId: otherRepoId,
@@ -272,18 +272,18 @@ final class WorkspaceCacheCoordinatorTests {
 
         coordinator.handleEnrichment(envelope)
 
-        #expect(cacheStore.pullRequestCountByWorktreeId[worktreeId] == 3)
-        #expect(cacheStore.pullRequestCountByWorktreeId[otherWorktreeId] == nil)
+        #expect(repoCache.pullRequestCountByWorktreeId[worktreeId] == 3)
+        #expect(repoCache.pullRequestCountByWorktreeId[otherWorktreeId] == nil)
     }
 
     @Test
     func enrichment_originChanged_validRemoteDerivesResolvedIdentity() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -303,7 +303,7 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
-        guard case .some(.resolved(_, let raw, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id] else {
+        guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
             Issue.record("Expected resolved enrichment")
             return
         }
@@ -317,11 +317,11 @@ final class WorkspaceCacheCoordinatorTests {
     @Test
     func enrichment_originChanged_emptyOriginDerivesLocalIdentity() {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
 
@@ -341,7 +341,7 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
-        guard case .some(.resolved(_, let raw, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id] else {
+        guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
             Issue.record("Expected resolved local enrichment")
             return
         }
@@ -353,12 +353,12 @@ final class WorkspaceCacheCoordinatorTests {
     @Test
     func scopeSync_originAndBranchDoNotInvokeForgeCommands_repoRemoved_unregisters() async {
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let recordedScopeChanges = RecordedScopeChanges()
         let coordinator = WorkspaceCacheCoordinator(
             bus: EventBus<RuntimeEnvelope>(),
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { change in
                 await recordedScopeChanges.record(change)
             }
@@ -439,12 +439,12 @@ final class WorkspaceCacheCoordinatorTests {
     func integration_addFolderTopologyConvergesToResolvedRemoteIdentity() async {
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let recordedScopeChanges = RecordedScopeChanges()
         let coordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { change in
                 await recordedScopeChanges.record(change)
             }
@@ -483,7 +483,7 @@ final class WorkspaceCacheCoordinatorTests {
         #expect(posted.subscriberCount > 0)
 
         let resolved = await eventually("repo enrichment should resolve from projector origin") {
-            guard case .some(.resolved(_, _, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id] else {
+            guard case .some(.resolved(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
                 return false
             }
             return identity.groupKey == "remote:askluna/agent-studio"
@@ -503,12 +503,12 @@ final class WorkspaceCacheCoordinatorTests {
     func integration_addFolderTopologyConvergesToResolvedLocalIdentityWhenRemoteMissing() async {
         let bus = EventBus<RuntimeEnvelope>()
         let workspaceStore = makeWorkspaceStore()
-        let cacheStore = WorkspaceCacheStore()
+        let repoCache = WorkspaceRepoCache()
         let recordedScopeChanges = RecordedScopeChanges()
         let coordinator = WorkspaceCacheCoordinator(
             bus: bus,
             workspaceStore: workspaceStore,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             scopeSyncHandler: { change in
                 await recordedScopeChanges.record(change)
             }
@@ -546,7 +546,7 @@ final class WorkspaceCacheCoordinatorTests {
         )
 
         let resolved = await eventually("local-only repo enrichment should resolve") {
-            guard case .some(.resolved(_, let raw, let identity, _)) = cacheStore.repoEnrichmentByRepoId[repo.id]
+            guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
             else {
                 return false
             }

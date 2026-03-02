@@ -132,7 +132,7 @@ enum CommandBarDataSource {
                         title: pane.title,
                         subtitle: "Tab \(tabIndex + 1)" + (isActive ? " · Active" : ""),
                         icon: iconForPane(pane),
-                        iconColor: pane.agent?.color,
+                        iconColor: nil,
                         group: Group.panes,
                         groupPriority: Priority.panes,
                         keywords: keywordsForPane(pane, store: store),
@@ -188,7 +188,7 @@ enum CommandBarDataSource {
                         title: pane.title,
                         subtitle: isActive ? "Active Pane" : nil,
                         icon: iconForPane(pane),
-                        iconColor: pane.agent?.color,
+                        iconColor: nil,
                         group: tabGroupName,
                         groupPriority: tabIndex,
                         keywords: keywordsForPane(pane, store: store),
@@ -357,7 +357,7 @@ enum CommandBarDataSource {
                             title: pane.title,
                             subtitle: "Tab \(tabIndex + 1)",
                             icon: iconForPane(pane),
-                            iconColor: pane.agent?.color,
+                            iconColor: nil,
                             group: "Panes",
                             groupPriority: 1,
                             action: .dispatchTargeted(def.command, target: pane.id, targetType: targetType)
@@ -411,7 +411,7 @@ enum CommandBarDataSource {
                     title: pane.title,
                     subtitle: "Tab \(tabIndex + 1)",
                     icon: iconForPane(pane),
-                    iconColor: pane.agent?.color,
+                    iconColor: nil,
                     group: "Panes",
                     groupPriority: 0,
                     action: .navigate(destinationLevel),
@@ -605,9 +605,6 @@ enum CommandBarDataSource {
         }
         if let worktreeId = pane.worktreeId, let wt = store.worktree(worktreeId) {
             keywords.append(wt.name)
-        }
-        if let agent = pane.agent {
-            keywords.append(agent.displayName)
         }
         return keywords
     }

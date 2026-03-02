@@ -14,7 +14,7 @@ class MainSplitViewController: NSSplitViewController {
     // MARK: - Dependencies (injected)
 
     private let store: WorkspaceStore
-    private let cacheStore: WorkspaceCacheStore
+    private let repoCache: WorkspaceRepoCache
     private let uiStore: WorkspaceUIStore
     private let actionExecutor: ActionExecutor
     private let tabBarAdapter: TabBarAdapter
@@ -22,13 +22,13 @@ class MainSplitViewController: NSSplitViewController {
 
     init(
         store: WorkspaceStore,
-        cacheStore: WorkspaceCacheStore,
+        repoCache: WorkspaceRepoCache,
         uiStore: WorkspaceUIStore,
         actionExecutor: ActionExecutor,
         tabBarAdapter: TabBarAdapter, viewRegistry: ViewRegistry
     ) {
         self.store = store
-        self.cacheStore = cacheStore
+        self.repoCache = repoCache
         self.uiStore = uiStore
         self.actionExecutor = actionExecutor
         self.tabBarAdapter = tabBarAdapter
@@ -53,7 +53,7 @@ class MainSplitViewController: NSSplitViewController {
         // Create sidebar (SwiftUI via NSHostingController)
         let sidebarView = SidebarViewWrapper(
             store: store,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             uiStore: uiStore
         )
         let sidebarHosting = NSHostingController(rootView: AnyView(sidebarView))
@@ -240,13 +240,13 @@ class MainSplitViewController: NSSplitViewController {
 /// Uses WorkspaceStore instead of SessionManager.
 struct SidebarViewWrapper: View {
     let store: WorkspaceStore
-    let cacheStore: WorkspaceCacheStore
+    let repoCache: WorkspaceRepoCache
     let uiStore: WorkspaceUIStore
 
     var body: some View {
         RepoSidebarContentView(
             store: store,
-            cacheStore: cacheStore,
+            repoCache: repoCache,
             uiStore: uiStore
         )
     }

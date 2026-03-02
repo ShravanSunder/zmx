@@ -63,7 +63,6 @@ final class WorkspacePersistorTests {
         let pane = makePane(
             source: .worktree(worktreeId: UUID(), repoId: UUID()),
             title: "Feature",
-            agent: .claude,
             provider: .zmx,
             lifetime: .persistent,
             residency: .active
@@ -79,7 +78,6 @@ final class WorkspacePersistorTests {
         #expect(loaded?.panes.count == 1)
         #expect(loaded?.panes[0].id == pane.id)
         #expect(loaded?.panes[0].title == "Feature")
-        #expect(loaded?.panes[0].agent == .claude)
         #expect(loaded?.panes[0].provider == .zmx)
         #expect(loaded?.panes[0].lifetime == .persistent)
         #expect(loaded?.panes[0].residency == .active)
