@@ -563,6 +563,195 @@ final class WorkspaceCacheCoordinatorTests {
         await projector.shutdown()
     }
 
+    // MARK: - Idempotency
+
+    @Test
+    func topology_repoDiscovered_duplicatePath_doesNotCreateSecondRepo() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repoPath = URL(fileURLWithPath: "/tmp/idempotent-repo")
+        let envelope = SystemEnvelope.test(
+            event: .topology(.repoDiscovered(repoPath: repoPath, parentPath: repoPath.deletingLastPathComponent()))
+        )
+
+        coordinator.handleTopology(envelope)
+        #expect(workspaceStore.repos.count == 1)
+
+        coordinator.handleTopology(envelope)
+        #expect(workspaceStore.repos.count == 1)
+    }
+
+    @Test
+    func topology_worktreeRegistered_duplicateId_doesNotCreateSecondWorktree() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repoPath = URL(fileURLWithPath: "/tmp/idempotent-wt-repo")
+        let discoverEnvelope = SystemEnvelope.test(
+            event: .topology(.repoDiscovered(repoPath: repoPath, parentPath: repoPath.deletingLastPathComponent()))
+        )
+        coordinator.handleTopology(discoverEnvelope)
+        let repo = workspaceStore.repos[0]
+
+        let worktreeId = UUID()
+        let wtPath = URL(fileURLWithPath: "/tmp/idempotent-wt-repo/feature")
+        let wtEnvelope = SystemEnvelope.test(
+            event: .topology(.worktreeRegistered(worktreeId: worktreeId, repoId: repo.id, rootPath: wtPath))
+        )
+
+        coordinator.handleTopology(wtEnvelope)
+        let countAfterFirst = workspaceStore.repos.first(where: { $0.id == repo.id })!.worktrees.count
+
+        coordinator.handleTopology(wtEnvelope)
+        let countAfterSecond = workspaceStore.repos.first(where: { $0.id == repo.id })!.worktrees.count
+
+        #expect(countAfterFirst == countAfterSecond)
+    }
+
+    @Test
+    func topology_repoDiscovered_afterRestore_upsertsNotAppends() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        // Simulate a pre-existing repo (as if restored from persistence)
+        let repoPath = URL(fileURLWithPath: "/tmp/restored-repo")
+        let existingRepo = workspaceStore.addRepo(at: repoPath)
+        #expect(workspaceStore.repos.count == 1)
+
+        // Now emit repoDiscovered for the same path
+        let envelope = SystemEnvelope.test(
+            event: .topology(.repoDiscovered(repoPath: repoPath, parentPath: repoPath.deletingLastPathComponent()))
+        )
+        coordinator.handleTopology(envelope)
+
+        // Should still be 1 repo, not 2
+        #expect(workspaceStore.repos.count == 1)
+        #expect(workspaceStore.repos[0].id == existingRepo.id)
+        // Enrichment should be set
+        #expect(repoCache.repoEnrichmentByRepoId[existingRepo.id] == .unresolved(repoId: existingRepo.id))
+    }
+
+    // MARK: - Ordering Tolerance
+
+    @Test
+    func enrichment_snapshotBeforeWorktreeRegistered_cacheStillUpdates() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repoId = UUID()
+        let worktreeId = UUID()
+        // Enrichment arrives before worktreeRegistered — no worktree in store yet
+        let snapshot = GitWorkingTreeSnapshot(
+            worktreeId: worktreeId,
+            repoId: repoId,
+            rootPath: URL(fileURLWithPath: "/tmp/early-enrichment"),
+            summary: GitWorkingTreeSummary(changed: 1, staged: 0, untracked: 2),
+            branch: "feature/early"
+        )
+
+        coordinator.handleEnrichment(
+            WorktreeEnvelope.test(
+                event: .gitWorkingDirectory(.snapshotChanged(snapshot: snapshot)),
+                repoId: repoId,
+                worktreeId: worktreeId,
+                source: .system(.builtin(.gitWorkingDirectoryProjector))
+            )
+        )
+
+        // Cache accepts the enrichment even though no worktree is registered
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "feature/early")
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.snapshot == snapshot)
+    }
+
+    @Test
+    func enrichment_branchChangedBeforeWorktreeRegistered_cacheStillUpdates() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repoId = UUID()
+        let worktreeId = UUID()
+
+        coordinator.handleEnrichment(
+            WorktreeEnvelope.test(
+                event: .gitWorkingDirectory(
+                    .branchChanged(worktreeId: worktreeId, repoId: repoId, from: "", to: "main")
+                ),
+                repoId: repoId,
+                worktreeId: worktreeId,
+                source: .system(.builtin(.gitWorkingDirectoryProjector))
+            )
+        )
+
+        #expect(repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main")
+    }
+
+    @Test
+    func enrichment_originChangedBeforeRepoDiscovered_cacheStillUpdates() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repoId = UUID()
+
+        coordinator.handleEnrichment(
+            WorktreeEnvelope.test(
+                event: .gitWorkingDirectory(
+                    .originChanged(
+                        repoId: repoId,
+                        from: "",
+                        to: "git@github.com:askluna/agent-studio.git"
+                    )
+                ),
+                repoId: repoId,
+                source: .system(.builtin(.gitWorkingDirectoryProjector))
+            )
+        )
+
+        // Origin enrichment resolves even without a discovered repo
+        guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repoId] else {
+            Issue.record("Expected resolved enrichment even before repo discovered")
+            return
+        }
+        #expect(raw.origin == "git@github.com:askluna/agent-studio.git")
+        #expect(identity.groupKey == "remote:askluna/agent-studio")
+    }
+
     private func eventually(
         _ description: String,
         maxAttempts: Int = 100,

@@ -78,7 +78,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RestoreTrace.log("workspace.boot.step=\(step.rawValue)")
     }
 
-    // swiftlint:disable:next function_body_length
     private func executeBootStep(
         _ step: WorkspaceBootStep,
         persistor: WorkspacePersistor,
@@ -87,128 +86,199 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     ) {
         switch step {
         case .loadCanonicalStore:
-            store = WorkspaceStore()
-            store.restore()
-            RestoreTrace.log(
-                "store.restore complete tabs=\(store.tabs.count) panes=\(store.panes.count) activeTab=\(store.activeTabId?.uuidString ?? "nil")"
-            )
+            bootLoadCanonicalStore()
         case .loadCacheStore:
-            workspaceRepoCache = WorkspaceRepoCache()
-            switch persistor.loadCache(for: store.workspaceId) {
-            case .loaded(let cacheState):
-                for enrichment in cacheState.repoEnrichmentByRepoId.values {
-                    workspaceRepoCache.setRepoEnrichment(enrichment)
-                }
-                for enrichment in cacheState.worktreeEnrichmentByWorktreeId.values {
-                    workspaceRepoCache.setWorktreeEnrichment(enrichment)
-                }
-                for (worktreeId, count) in cacheState.pullRequestCountByWorktreeId {
-                    workspaceRepoCache.setPullRequestCount(count, for: worktreeId)
-                }
-                for (worktreeId, count) in cacheState.notificationCountByWorktreeId {
-                    workspaceRepoCache.setNotificationCount(count, for: worktreeId)
-                }
-                workspaceRepoCache.markRebuilt(
-                    sourceRevision: cacheState.sourceRevision,
-                    at: cacheState.lastRebuiltAt ?? Date()
-                )
-            case .corrupt(let error):
-                appLogger.warning("Cache file corrupt, will rebuild from events: \(error)")
-            case .missing:
-                break
-            }
+            bootLoadCacheStore(persistor: persistor)
         case .loadUIStore:
-            workspaceUIStore = WorkspaceUIStore()
-            switch persistor.loadUI(for: store.workspaceId) {
-            case .loaded(let uiState):
-                workspaceUIStore.setExpandedGroups(uiState.expandedGroups)
-                for (stableKey, colorHex) in uiState.checkoutColors {
-                    workspaceUIStore.setCheckoutColor(colorHex, for: stableKey)
-                }
-                workspaceUIStore.setFilterText(uiState.filterText)
-                workspaceUIStore.setFilterVisible(uiState.isFilterVisible)
-            case .corrupt(let error):
-                appLogger.warning("UI state file corrupt, using defaults: \(error)")
-            case .missing:
-                break
-            }
+            bootLoadUIStore(persistor: persistor)
         case .establishRuntimeBus:
-            runtime = SessionRuntime(store: store)
-            cleanupOrphanZmxSessions()
-            viewRegistry = ViewRegistry()
-            let pipeline = FilesystemGitPipeline(
-                bus: paneRuntimeBus,
-                fseventStreamClient: DarwinFSEventStreamClient()
-            )
-            filesystemSource = pipeline
-            paneCoordinator = PaneCoordinator(
-                store: store,
-                viewRegistry: viewRegistry,
-                runtime: runtime,
-                surfaceManager: SurfaceManager.shared,
-                runtimeRegistry: .shared,
-                paneEventBus: paneRuntimeBus,
-                filesystemSource: pipeline
-            )
-            workspaceCacheCoordinator = WorkspaceCacheCoordinator(
-                bus: paneRuntimeBus,
-                workspaceStore: store,
-                cacheStore: workspaceRepoCache,
-                scopeSyncHandler: { [weak pipeline] change in
-                    guard let pipeline else { return }
-                    await pipeline.applyScopeChange(change)
-                }
-            )
-            executor = ActionExecutor(coordinator: paneCoordinator, store: store)
-            tabBarAdapter = TabBarAdapter(store: store)
-            commandBarController = CommandBarPanelController(store: store, dispatcher: .shared)
-            oauthService = OAuthService()
+            bootEstablishRuntimeBus(paneRuntimeBus: paneRuntimeBus, filesystemSource: &filesystemSource)
         case .startFilesystemActor:
-            if let filesystemSource {
-                let previousTask = filesystemPipelineBootTask
-                filesystemPipelineBootTask = Task {
-                    if let previousTask {
-                        await previousTask.value
-                    }
-                    await filesystemSource.startFilesystemActor()
-                }
-            }
+            bootChainPipelineStep(filesystemSource) { await $0.startFilesystemActor() }
         case .startGitProjector:
-            if let filesystemSource {
-                let previousTask = filesystemPipelineBootTask
-                filesystemPipelineBootTask = Task {
-                    if let previousTask {
-                        await previousTask.value
-                    }
-                    await filesystemSource.startGitProjector()
-                }
-            }
+            bootChainPipelineStep(filesystemSource) { await $0.startGitProjector() }
         case .startForgeActor:
-            if let filesystemSource {
-                let previousTask = filesystemPipelineBootTask
-                filesystemPipelineBootTask = Task {
-                    if let previousTask {
-                        await previousTask.value
-                    }
-                    await filesystemSource.startForgeActor()
-                }
-            }
+            bootChainPipelineStep(filesystemSource) { await $0.startForgeActor() }
         case .startCacheCoordinator:
             workspaceCacheCoordinator.startConsuming()
         case .triggerInitialTopologySync:
-            if let filesystemPipelineBootTask {
-                Task { [weak self] in
-                    await filesystemPipelineBootTask.value
-                    await MainActor.run {
-                        self?.paneCoordinator.syncFilesystemRootsAndActivity()
-                    }
-                }
-            } else {
-                paneCoordinator.syncFilesystemRootsAndActivity()
-            }
+            bootTriggerInitialTopologySync()
         case .readyForReactiveSidebar:
             break
         }
+    }
+
+    // MARK: - Boot Step Implementations
+
+    private func bootLoadCanonicalStore() {
+        store = WorkspaceStore()
+        store.restore()
+        RestoreTrace.log(
+            "store.restore complete tabs=\(store.tabs.count) panes=\(store.panes.count) activeTab=\(store.activeTabId?.uuidString ?? "nil")"
+        )
+    }
+
+    private func bootLoadCacheStore(persistor: WorkspacePersistor) {
+        workspaceRepoCache = WorkspaceRepoCache()
+        switch persistor.loadCache(for: store.workspaceId) {
+        case .loaded(let cacheState):
+            for enrichment in cacheState.repoEnrichmentByRepoId.values {
+                workspaceRepoCache.setRepoEnrichment(enrichment)
+            }
+            for enrichment in cacheState.worktreeEnrichmentByWorktreeId.values {
+                workspaceRepoCache.setWorktreeEnrichment(enrichment)
+            }
+            for (worktreeId, count) in cacheState.pullRequestCountByWorktreeId {
+                workspaceRepoCache.setPullRequestCount(count, for: worktreeId)
+            }
+            for (worktreeId, count) in cacheState.notificationCountByWorktreeId {
+                workspaceRepoCache.setNotificationCount(count, for: worktreeId)
+            }
+            workspaceRepoCache.markRebuilt(
+                sourceRevision: cacheState.sourceRevision,
+                at: cacheState.lastRebuiltAt ?? Date()
+            )
+        case .corrupt(let error):
+            appLogger.warning("Cache file corrupt, will rebuild from events: \(error)")
+        case .missing:
+            break
+        }
+        pruneStaleCache(store: store, repoCache: workspaceRepoCache)
+    }
+
+    private func bootLoadUIStore(persistor: WorkspacePersistor) {
+        workspaceUIStore = WorkspaceUIStore()
+        switch persistor.loadUI(for: store.workspaceId) {
+        case .loaded(let uiState):
+            workspaceUIStore.setExpandedGroups(uiState.expandedGroups)
+            for (stableKey, colorHex) in uiState.checkoutColors {
+                workspaceUIStore.setCheckoutColor(colorHex, for: stableKey)
+            }
+            workspaceUIStore.setFilterText(uiState.filterText)
+            workspaceUIStore.setFilterVisible(uiState.isFilterVisible)
+        case .corrupt(let error):
+            appLogger.warning("UI state file corrupt, using defaults: \(error)")
+        case .missing:
+            break
+        }
+    }
+
+    private func bootEstablishRuntimeBus(
+        paneRuntimeBus: EventBus<RuntimeEnvelope>,
+        filesystemSource: inout FilesystemGitPipeline?
+    ) {
+        runtime = SessionRuntime(store: store)
+        cleanupOrphanZmxSessions()
+        viewRegistry = ViewRegistry()
+        let pipeline = FilesystemGitPipeline(
+            bus: paneRuntimeBus,
+            fseventStreamClient: DarwinFSEventStreamClient()
+        )
+        filesystemSource = pipeline
+        paneCoordinator = PaneCoordinator(
+            store: store,
+            viewRegistry: viewRegistry,
+            runtime: runtime,
+            surfaceManager: SurfaceManager.shared,
+            runtimeRegistry: .shared,
+            paneEventBus: paneRuntimeBus,
+            filesystemSource: pipeline
+        )
+        workspaceCacheCoordinator = WorkspaceCacheCoordinator(
+            bus: paneRuntimeBus,
+            workspaceStore: store,
+            repoCache: workspaceRepoCache,
+            scopeSyncHandler: { [weak pipeline] change in
+                guard let pipeline else { return }
+                await pipeline.applyScopeChange(change)
+            }
+        )
+        executor = ActionExecutor(coordinator: paneCoordinator, store: store)
+        tabBarAdapter = TabBarAdapter(store: store)
+        commandBarController = CommandBarPanelController(store: store, dispatcher: .shared)
+        oauthService = OAuthService()
+    }
+
+    private func bootChainPipelineStep(
+        _ filesystemSource: FilesystemGitPipeline?,
+        action: @escaping @Sendable (FilesystemGitPipeline) async -> Void
+    ) {
+        guard let filesystemSource else { return }
+        let previousTask = filesystemPipelineBootTask
+        filesystemPipelineBootTask = Task {
+            if let previousTask {
+                await previousTask.value
+            }
+            await action(filesystemSource)
+        }
+    }
+
+    private func bootTriggerInitialTopologySync() {
+        replayBootTopology(store: store, coordinator: workspaceCacheCoordinator)
+        if let filesystemPipelineBootTask {
+            Task { [weak self] in
+                await filesystemPipelineBootTask.value
+                await MainActor.run {
+                    self?.paneCoordinator.syncFilesystemRootsAndActivity()
+                }
+            }
+        } else {
+            paneCoordinator.syncFilesystemRootsAndActivity()
+        }
+    }
+
+    // MARK: - Boot Helpers
+
+    private func pruneStaleCache(store: WorkspaceStore, repoCache: WorkspaceRepoCache) {
+        let validRepoIds = Set(store.repos.map(\.id))
+        let validWorktreeIds = Set(store.repos.flatMap(\.worktrees).map(\.id))
+        for repoId in Array(repoCache.repoEnrichmentByRepoId.keys) where !validRepoIds.contains(repoId) {
+            repoCache.removeRepo(repoId)
+        }
+        for worktreeId in Array(repoCache.worktreeEnrichmentByWorktreeId.keys)
+        where !validWorktreeIds.contains(worktreeId) {
+            repoCache.removeWorktree(worktreeId)
+        }
+    }
+
+    private func replayBootTopology(store: WorkspaceStore, coordinator: WorkspaceCacheCoordinator) {
+        let activePaneRepoIds: Set<UUID> = {
+            guard let activeTab = store.activeTab else { return [] }
+            let repoIds = activeTab.paneIds.compactMap { store.panes[$0]?.repoId }
+            return Set(repoIds)
+        }()
+        let prioritizedRepos = store.repos.sorted { a, b in
+            let aActive = activePaneRepoIds.contains(a.id)
+            let bActive = activePaneRepoIds.contains(b.id)
+            if aActive != bActive { return aActive }
+            return false
+        }
+        for repo in prioritizedRepos {
+            coordinator.consume(
+                Self.makeTopologyEnvelope(
+                    repoPath: repo.repoPath,
+                    source: .builtin(.coordinator)
+                )
+            )
+        }
+    }
+
+    /// Build a canonical `.repoDiscovered` topology envelope.
+    /// Coordinator-originated events use `.builtin(.coordinator)`;
+    /// filesystem-originated events use `.builtin(.filesystemWatcher)`.
+    static func makeTopologyEnvelope(repoPath: URL, source: SystemSource) -> RuntimeEnvelope {
+        .system(
+            SystemEnvelope(
+                source: source,
+                seq: 0,
+                timestamp: .now,
+                event: .topology(
+                    .repoDiscovered(
+                        repoPath: repoPath,
+                        parentPath: repoPath.deletingLastPathComponent()
+                    ))
+            )
+        )
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -255,7 +325,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create main window
         mainWindowController = MainWindowController(
             store: store,
-            cacheStore: workspaceRepoCache,
+            repoCache: workspaceRepoCache,
             uiStore: workspaceUIStore,
             actionExecutor: executor,
             tabBarAdapter: tabBarAdapter,
@@ -468,7 +538,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             mainWindowController = MainWindowController(
                 store: store,
-                cacheStore: workspaceRepoCache,
+                repoCache: workspaceRepoCache,
                 uiStore: workspaceUIStore,
                 actionExecutor: executor,
                 tabBarAdapter: tabBarAdapter,
@@ -788,18 +858,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func addRepoIfNeeded(_ path: URL) {
-        let normalizedPath = path.standardizedFileURL.path
+        let normalizedPath = path.standardizedFileURL
 
-        for repo in store.repos {
-            if repo.repoPath.standardizedFileURL.path == normalizedPath {
-                return
-            }
-            if repo.worktrees.contains(where: { $0.path.standardizedFileURL.path == normalizedPath }) {
-                return
-            }
+        // Skip if the path is already a known worktree of an existing repo.
+        let isKnownWorktree = store.repos.contains { repo in
+            repo.worktrees.contains { $0.path.standardizedFileURL == normalizedPath }
         }
+        if isKnownWorktree { return }
 
-        _ = store.addRepo(at: path.standardizedFileURL)
+        // Emit topology event — the idempotent coordinator handles repo-level dedup,
+        // enrichment seeding, and scope sync in one place.
+        workspaceCacheCoordinator.consume(
+            Self.makeTopologyEnvelope(repoPath: normalizedPath, source: .builtin(.coordinator))
+        )
         paneCoordinator.syncFilesystemRootsAndActivity()
     }
 

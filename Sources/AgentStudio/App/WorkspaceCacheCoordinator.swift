@@ -60,11 +60,11 @@ final class WorkspaceCacheCoordinator {
 
         switch topologyEvent {
         case .repoDiscovered(let repoPath, _):
-            let exists = workspaceStore.repos.contains { $0.repoPath == repoPath }
-            if !exists {
-                let repo = workspaceStore.addRepo(at: repoPath)
-                repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
-            } else if let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) {
+            let incomingStableKey = StableKey.fromPath(repoPath)
+            let existingRepo = workspaceStore.repos.first {
+                $0.repoPath == repoPath || $0.stableKey == incomingStableKey
+            }
+            if let repo = existingRepo {
                 if repoCache.repoEnrichmentByRepoId[repo.id] == nil {
                     repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
                 }
@@ -75,6 +75,9 @@ final class WorkspaceCacheCoordinator {
                         discoveredWorktrees: repo.worktrees
                     )
                 }
+            } else {
+                let repo = workspaceStore.addRepo(at: repoPath)
+                repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
             }
         case .repoRemoved(let repoPath):
             if let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) {

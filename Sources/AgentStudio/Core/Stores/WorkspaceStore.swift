@@ -1200,7 +1200,10 @@ final class WorkspaceStore {
     @discardableResult
     func addRepo(at path: URL) -> Repo {
         let normalizedPath = path.standardizedFileURL
-        if let existing = repos.first(where: { $0.repoPath.standardizedFileURL == normalizedPath }) {
+        let incomingStableKey = StableKey.fromPath(normalizedPath)
+        if let existing = repos.first(where: {
+            $0.repoPath.standardizedFileURL == normalizedPath || $0.stableKey == incomingStableKey
+        }) {
             unavailableRepoIds.remove(existing.id)
             return existing
         }
