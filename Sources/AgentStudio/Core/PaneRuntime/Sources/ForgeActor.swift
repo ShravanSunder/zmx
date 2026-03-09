@@ -198,6 +198,8 @@ actor ForgeActor {
             await refresh(repo: repoId, correlationId: correlationId)
         case .originChanged(_, _, let to):
             await register(repo: repoId, remote: to)
+        case .originUnavailable:
+            return
         case .worktreeDiscovered(_, _, let branch, _):
             if !branch.isEmpty {
                 branchesByRepoId[repoId, default: []].insert(branch)

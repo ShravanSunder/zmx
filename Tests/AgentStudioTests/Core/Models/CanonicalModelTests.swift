@@ -45,7 +45,7 @@ final class CanonicalModelTests {
     @Test
     func repoEnrichment_holdsDerivedRepoMetadata() {
         let repoId = UUID()
-        let enrichment = RepoEnrichment.resolved(
+        let enrichment = RepoEnrichment.resolvedRemote(
             repoId: repoId,
             raw: RawRepoOrigin(
                 origin: "git@github.com:askluna/agent-studio.git",

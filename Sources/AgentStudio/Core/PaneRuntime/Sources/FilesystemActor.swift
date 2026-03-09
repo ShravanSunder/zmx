@@ -43,6 +43,7 @@ actor FilesystemActor {
     private let fseventStreamClient: any FSEventStreamClient
     private let envelopeClock = ContinuousClock()
     private let sleepClock: any Clock<Duration>
+    private let watchedFolderScanner: @Sendable (URL) -> [URL]
     private let debounceWindow: Duration
     private let maxFlushLatency: Duration
 
@@ -52,6 +53,7 @@ actor FilesystemActor {
     private var nextEnvelopeSequence: UInt64 = 0
 
     private var watchedFolderIds: [URL: UUID] = [:]
+    private var watchedFolderRepoPathsByRoot: [URL: Set<URL>] = [:]
     private var fallbackRescanTask: Task<Void, Never>?
 
     private var ingressTask: Task<Void, Never>?
@@ -61,12 +63,14 @@ actor FilesystemActor {
     init(
         bus: EventBus<RuntimeEnvelope> = PaneRuntimeEventBus.shared,
         fseventStreamClient: any FSEventStreamClient = DarwinFSEventStreamClient(),
+        watchedFolderScanner: @escaping @Sendable (URL) -> [URL] = { RepoScanner().scanForGitRepos(in: $0) },
         sleepClock: any Clock<Duration> = ContinuousClock(),
         debounceWindow: Duration = .milliseconds(500),
         maxFlushLatency: Duration = .seconds(2)
     ) {
         self.runtimeBus = bus
         self.fseventStreamClient = fseventStreamClient
+        self.watchedFolderScanner = watchedFolderScanner
         self.sleepClock = sleepClock
         self.debounceWindow = debounceWindow
         self.maxFlushLatency = maxFlushLatency
@@ -172,6 +176,7 @@ actor FilesystemActor {
         roots.removeAll(keepingCapacity: false)
         pendingChangesByWorktreeId.removeAll(keepingCapacity: false)
         watchedFolderIds.removeAll(keepingCapacity: false)
+        watchedFolderRepoPathsByRoot.removeAll(keepingCapacity: false)
         activePaneWorktreeId = nil
         fseventStreamClient.shutdown()
         hasShutdown = true
@@ -513,6 +518,10 @@ actor FilesystemActor {
     // MARK: - Watched Folder Scanning
 
     func updateWatchedFolders(_ paths: [URL]) async {
+        _ = await refreshWatchedFolders(paths)
+    }
+
+    func refreshWatchedFolders(_ paths: [URL]) async -> WatchedFolderRefreshSummary {
         startIngressTaskIfNeeded()
 
         let newPaths = Set(paths.map { $0.standardizedFileURL })
@@ -522,6 +531,7 @@ actor FilesystemActor {
             if let syntheticId = watchedFolderIds.removeValue(forKey: removed) {
                 fseventStreamClient.unregister(worktreeId: syntheticId)
             }
+            watchedFolderRepoPathsByRoot.removeValue(forKey: removed)
         }
 
         for added in newPaths.subtracting(oldPaths) {
@@ -530,8 +540,9 @@ actor FilesystemActor {
             fseventStreamClient.register(worktreeId: syntheticId, repoId: syntheticId, rootPath: added)
         }
 
-        await rescanAllWatchedFolders()
+        let summary = await rescanAllWatchedFolders()
         startFallbackRescan()
+        return summary
     }
 
     private func isWatchedFolderBatch(_ worktreeId: UUID) -> Bool {
@@ -548,26 +559,48 @@ actor FilesystemActor {
             return
         }
 
-        let repoPaths = await scanFolder(folderPath)
-        for repoPath in repoPaths {
-            await emitRepoDiscovered(repoPath: repoPath, parentPath: folderPath)
-        }
+        _ = await refreshWatchedFolder(folderPath)
     }
 
     /// Blocking filesystem scan — MUST run off the actor's executor.
     /// Under SE-0461, plain nonisolated async inherits actor isolation.
     /// @concurrent ensures this escapes to the global executor.
-    @concurrent nonisolated private func scanFolder(_ folderPath: URL) async -> [URL] {
-        RepoScanner().scanForGitRepos(in: folderPath)
+    @concurrent nonisolated private static func scanFolder(
+        _ folderPath: URL,
+        using watchedFolderScanner: @escaping @Sendable (URL) -> [URL]
+    ) async -> [URL] {
+        watchedFolderScanner(folderPath)
     }
 
-    private func rescanAllWatchedFolders() async {
+    private func rescanAllWatchedFolders() async -> WatchedFolderRefreshSummary {
+        var repoPathsByWatchedFolder: [URL: [URL]] = [:]
         for (folderPath, _) in watchedFolderIds {
-            let repoPaths = await scanFolder(folderPath)
-            for repoPath in repoPaths {
-                await emitRepoDiscovered(repoPath: repoPath, parentPath: folderPath)
-            }
+            repoPathsByWatchedFolder[folderPath] = await refreshWatchedFolder(folderPath)
         }
+        return WatchedFolderRefreshSummary(repoPathsByWatchedFolder: repoPathsByWatchedFolder)
+    }
+
+    private func refreshWatchedFolder(_ folderPath: URL) async -> [URL] {
+        let currentRepoPaths = await Self.scanFolder(folderPath, using: watchedFolderScanner)
+            .map(\.standardizedFileURL)
+        let currentRepoPathSet = Set(currentRepoPaths)
+        let previousRepoPathSet = watchedFolderRepoPathsByRoot[folderPath, default: []]
+
+        let addedRepoPaths = currentRepoPathSet.subtracting(previousRepoPathSet)
+            .sorted { $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending }
+        let removedRepoPaths = previousRepoPathSet.subtracting(currentRepoPathSet)
+            .sorted { $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending }
+
+        for repoPath in addedRepoPaths {
+            await emitRepoDiscovered(repoPath: repoPath, parentPath: folderPath)
+        }
+
+        for repoPath in removedRepoPaths {
+            await emitRepoRemoved(repoPath: repoPath)
+        }
+
+        watchedFolderRepoPathsByRoot[folderPath] = currentRepoPathSet
+        return currentRepoPaths.sorted { $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending }
     }
 
     private func emitRepoDiscovered(repoPath: URL, parentPath: URL) async {
@@ -588,6 +621,24 @@ actor FilesystemActor {
         }
     }
 
+    private func emitRepoRemoved(repoPath: URL) async {
+        nextEnvelopeSequence += 1
+        let envelope = RuntimeEnvelope.system(
+            SystemEnvelope(
+                source: .builtin(.filesystemWatcher),
+                seq: nextEnvelopeSequence,
+                timestamp: envelopeClock.now,
+                event: .topology(.repoRemoved(repoPath: repoPath))
+            )
+        )
+        let droppedCount = (await runtimeBus.post(envelope)).droppedCount
+        if droppedCount > 0 {
+            Self.logger.warning(
+                "Repo removed event delivery dropped for \(droppedCount, privacy: .public) subscriber(s); repoPath=\(repoPath.path, privacy: .public)"
+            )
+        }
+    }
+
     private func startFallbackRescan() {
         fallbackRescanTask?.cancel()
         guard !watchedFolderIds.isEmpty else { return }
@@ -596,7 +647,7 @@ actor FilesystemActor {
             while !Task.isCancelled {
                 try? await self.sleepClock.sleep(for: .seconds(300))
                 guard !Task.isCancelled else { break }
-                await self.rescanAllWatchedFolders()
+                _ = await self.rescanAllWatchedFolders()
             }
         }
     }

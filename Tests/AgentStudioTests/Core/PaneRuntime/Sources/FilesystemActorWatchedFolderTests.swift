@@ -6,6 +6,61 @@ import Testing
 @Suite("FilesystemActor Watched Folders")
 struct FilesystemActorWatchedFolderTests {
 
+    @Test("refreshWatchedFolders returns summary and emits discovered/removed diffs")
+    func refreshWatchedFoldersReturnsSummaryAndEmitsDiffs() async throws {
+        let bus = EventBus<RuntimeEnvelope>()
+        let fsClient = ControllableFSEventStreamClient()
+        let scanner = ControllableWatchedFolderScanner()
+        let actor = FilesystemActor(
+            bus: bus,
+            fseventStreamClient: fsClient,
+            watchedFolderScanner: scanner.scan,
+            debounceWindow: .zero,
+            maxFlushLatency: .zero
+        )
+
+        let watchedFolder = URL(fileURLWithPath: "/tmp/watched-summary-\(UUID().uuidString)")
+        let repoA = watchedFolder.appending(path: "app")
+        let repoB = watchedFolder.appending(path: "tool")
+
+        scanner.setResults([watchedFolder: [repoA, repoB]])
+        let initialStream = await bus.subscribe()
+        let initialSummary = await actor.refreshWatchedFolders([watchedFolder])
+        let initialEvents = await drainTopologyEvents(from: initialStream, timeout: .milliseconds(50))
+
+        #expect(Set(initialSummary.repoPaths(in: watchedFolder)) == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
+        #expect(initialEvents.discovered == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
+        #expect(initialEvents.removed.isEmpty)
+
+        let repeatStream = await bus.subscribe()
+        let repeatSummary = await actor.refreshWatchedFolders([watchedFolder])
+        let repeatEvents = await drainTopologyEvents(from: repeatStream, timeout: .milliseconds(50))
+
+        #expect(Set(repeatSummary.repoPaths(in: watchedFolder)) == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
+        #expect(repeatEvents.discovered.isEmpty)
+        #expect(repeatEvents.removed.isEmpty)
+
+        scanner.setResults([watchedFolder: [repoB]])
+        let removalStream = await bus.subscribe()
+        let removalSummary = await actor.refreshWatchedFolders([watchedFolder])
+        let removalEvents = await drainTopologyEvents(from: removalStream, timeout: .milliseconds(50))
+
+        #expect(Set(removalSummary.repoPaths(in: watchedFolder)) == Set([repoB.standardizedFileURL]))
+        #expect(removalEvents.discovered.isEmpty)
+        #expect(removalEvents.removed == Set([repoA.standardizedFileURL]))
+
+        scanner.setResults([watchedFolder: [repoA, repoB]])
+        let rediscoveredStream = await bus.subscribe()
+        let rediscoveredSummary = await actor.refreshWatchedFolders([watchedFolder])
+        let rediscoveredEvents = await drainTopologyEvents(from: rediscoveredStream, timeout: .milliseconds(50))
+
+        #expect(Set(rediscoveredSummary.repoPaths(in: watchedFolder)) == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
+        #expect(rediscoveredEvents.discovered == Set([repoA.standardizedFileURL]))
+        #expect(rediscoveredEvents.removed.isEmpty)
+
+        await actor.shutdown()
+    }
+
     // MARK: - Trigger Matching
 
     @Test("git directory changes trigger rescan, dotfiles like .gitignore do not")
@@ -20,7 +75,7 @@ struct FilesystemActorWatchedFolderTests {
         )
 
         let watchedFolder = URL(fileURLWithPath: "/tmp/watched-trigger-\(UUID().uuidString)")
-        await actor.updateWatchedFolders([watchedFolder])
+        _ = await actor.refreshWatchedFolders([watchedFolder])
 
         let syntheticId = fsClient.registeredWorktreeIds.first!
 
@@ -44,7 +99,7 @@ struct FilesystemActorWatchedFolderTests {
         // Drain bus — no .repoDiscovered should appear from the non-.git batch
         let eventsAfterNonGitBatch = await drainTopologyEvents(from: stream, timeout: .milliseconds(50))
         #expect(
-            eventsAfterNonGitBatch == 0,
+            eventsAfterNonGitBatch.discovered.isEmpty && eventsAfterNonGitBatch.removed.isEmpty,
             ".gitignore/.github paths should not trigger watched folder rescan"
         )
 
@@ -84,7 +139,7 @@ struct FilesystemActorWatchedFolderTests {
         await actor.register(worktreeId: worktreeId, repoId: repoId, rootPath: worktreePath)
 
         let watchedFolder = URL(fileURLWithPath: "/tmp/watched-ingress-\(UUID().uuidString)")
-        await actor.updateWatchedFolders([watchedFolder])
+        _ = await actor.refreshWatchedFolders([watchedFolder])
 
         let syntheticId = fsClient.registeredWorktreeIds.last!
 
@@ -131,16 +186,16 @@ struct FilesystemActorWatchedFolderTests {
         let folder2 = URL(fileURLWithPath: "/tmp/watch-lc-2-\(UUID().uuidString)")
 
         // Register two folders
-        await actor.updateWatchedFolders([folder1, folder2])
+        _ = await actor.refreshWatchedFolders([folder1, folder2])
         #expect(fsClient.registeredWorktreeIds.count == 2)
 
         // Update to only folder2 — folder1 should be unregistered
-        await actor.updateWatchedFolders([folder2])
+        _ = await actor.refreshWatchedFolders([folder2])
         #expect(fsClient.registeredWorktreeIds.count == 2)  // total registrations unchanged
         #expect(fsClient.unregisteredWorktreeIds.count == 1)
 
         // Update to empty — all unregistered
-        await actor.updateWatchedFolders([])
+        _ = await actor.refreshWatchedFolders([])
         #expect(fsClient.unregisteredWorktreeIds.count == 2)  // folder2 now also unregistered
 
         await actor.shutdown()
@@ -148,20 +203,32 @@ struct FilesystemActorWatchedFolderTests {
 
     // MARK: - Helpers
 
+    private struct TopologyEventSet: Equatable {
+        var discovered: Set<URL> = []
+        var removed: Set<URL> = []
+    }
+
     private func drainTopologyEvents(
         from stream: AsyncStream<RuntimeEnvelope>,
         timeout: Duration
-    ) async -> Int {
-        var count = 0
+    ) async -> TopologyEventSet {
+        var events = TopologyEventSet()
         let envelopes = await drainAllEnvelopes(from: stream, timeout: timeout)
         for envelope in envelopes {
             if case .system(let sys) = envelope,
-                case .topology(.repoDiscovered) = sys.event
+                case .topology(let topology) = sys.event
             {
-                count += 1
+                switch topology {
+                case .repoDiscovered(let repoPath, _):
+                    events.discovered.insert(repoPath.standardizedFileURL)
+                case .repoRemoved(let repoPath):
+                    events.removed.insert(repoPath.standardizedFileURL)
+                case .worktreeRegistered, .worktreeUnregistered:
+                    break
+                }
             }
         }
-        return count
+        return events
     }
 
     private func drainAllEnvelopes(
@@ -178,6 +245,30 @@ struct FilesystemActorWatchedFolderTests {
         try? await Task.sleep(for: timeout)
         collectTask.cancel()
         return await collectTask.value
+    }
+}
+
+final class ControllableWatchedFolderScanner: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resultsByRoot: [URL: [URL]] = [:]
+
+    func setResults(_ resultsByRoot: [URL: [URL]]) {
+        lock.withLock {
+            self.resultsByRoot = Dictionary(
+                uniqueKeysWithValues: resultsByRoot.map { key, value in
+                    (
+                        key.standardizedFileURL,
+                        value.map(\.standardizedFileURL)
+                    )
+                }
+            )
+        }
+    }
+
+    func scan(_ root: URL) -> [URL] {
+        lock.withLock {
+            resultsByRoot[root.standardizedFileURL, default: []]
+        }
     }
 }
 

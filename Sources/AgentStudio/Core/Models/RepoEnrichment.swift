@@ -15,32 +15,37 @@ struct RepoIdentity: Codable, Hashable, Sendable {
 }
 
 enum RepoEnrichment: Codable, Hashable, Sendable {
-    case unresolved(repoId: UUID)
-    case resolved(repoId: UUID, raw: RawRepoOrigin, identity: RepoIdentity, updatedAt: Date)
+    case awaitingOrigin(repoId: UUID)
+    case resolvedLocal(repoId: UUID, identity: RepoIdentity, updatedAt: Date)
+    case resolvedRemote(repoId: UUID, raw: RawRepoOrigin, identity: RepoIdentity, updatedAt: Date)
 
     var repoId: UUID {
         switch self {
-        case .unresolved(let repoId):
+        case .awaitingOrigin(let repoId):
             repoId
-        case .resolved(let repoId, _, _, _):
+        case .resolvedLocal(let repoId, _, _):
+            repoId
+        case .resolvedRemote(let repoId, _, _, _):
             repoId
         }
     }
 
     var raw: RawRepoOrigin? {
         switch self {
-        case .unresolved:
+        case .awaitingOrigin, .resolvedLocal:
             nil
-        case .resolved(_, let raw, _, _):
+        case .resolvedRemote(_, let raw, _, _):
             raw
         }
     }
 
     var identity: RepoIdentity? {
         switch self {
-        case .unresolved:
+        case .awaitingOrigin:
             nil
-        case .resolved(_, _, let identity, _):
+        case .resolvedLocal(_, let identity, _):
+            identity
+        case .resolvedRemote(_, _, let identity, _):
             identity
         }
     }

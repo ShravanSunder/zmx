@@ -180,17 +180,20 @@ SwiftPaneView           (direct Swift)             SwiftPaneRuntime             
 
 **User problem:** Agents edit 50 files in 2 seconds. The workspace needs to know "agent produced a changeset" without drowning in per-file events (JTBD 5, JTBD 6, P6).
 
-**Decision:** `FilesystemActor` emits filesystem facts (`.filesChanged`) and worktree topology (`.worktreeRegistered`/`.worktreeUnregistered`). A separate `GitWorkingDirectoryProjector` subscribes to `.filesChanged` and emits derived git facts (`.snapshotChanged`, `.branchChanged`, `.originChanged`). Repo-level topology events (`.repoDiscovered`, `.repoRemoved`) are produced by `AppDelegate` (for user "Add Folder" and boot replay) and fed directly to `WorkspaceCacheCoordinator.consume()` — they do not go through bus fanout. `FilesystemActor` enforces debounce (500ms settle) and max latency (2s) so sustained writes still flush bounded batches.
+**Decision:** `FilesystemActor` emits filesystem facts (`.filesChanged`) and watched-folder topology facts (`.repoDiscovered`, `.repoRemoved`) alongside worktree topology (`.worktreeRegistered`/`.worktreeUnregistered`). A separate `GitWorkingDirectoryProjector` subscribes to `.filesChanged` and emits derived git facts (`.snapshotChanged`, `.branchChanged`, `.originChanged`). Add Folder uses a direct watched-folder command to trigger the actor and receive a scan summary, but topology facts still flow through the bus fanout. `FilesystemActor` enforces debounce (500ms settle) and max latency (2s) so sustained writes still flush bounded batches.
 
 **Enrichment pipeline context:** This filesystem observation is part of a sequential enrichment pipeline: `FilesystemActor → GitWorkingDirectoryProjector → ForgeActor → WorkspaceCacheCoordinator`. Each stage subscribes to the bus and produces enriched events. The full pipeline spec is in [Workspace Data Architecture](workspace_data_architecture.md).
 
 **Primary sidebar identity contract (implemented):**
-1. `GitWorkingDirectoryProjector` is the only origin producer. It emits `.originChanged(repoId:from:to:)` on worktree registration and `.git/config` changes.
-2. `WorkspaceCacheCoordinator` derives typed repo identity from origin and writes `RepoEnrichment` as a discriminated union:
-   - `.unresolved(repoId:)` for not-yet-derived identity.
-   - `.resolved(repoId:raw:identity:updatedAt:)` for derived identity.
-   - `raw` contains git facts (`origin`, `upstream`), `identity` contains projection fields (`groupKey`, `remoteSlug`, `organizationName`, `displayName`).
-3. `RepoSidebarContentView` primary grouping uses `identity.groupKey` only when enrichment is `.resolved`; unresolved repos are grouped into deterministic pending buckets; missing cache entries fall back to path grouping.
+1. `GitWorkingDirectoryProjector` is the only origin producer. It emits:
+   - `.originChanged(repoId:from:to:)` when a remote is resolved
+   - `.originUnavailable(repoId:)` when local-only is explicitly confirmed
+2. `WorkspaceCacheCoordinator` derives typed repo identity from git facts and writes `RepoEnrichment` as a discriminated union:
+   - `.awaitingOrigin(repoId:)` while identity is still unresolved
+   - `.resolvedLocal(repoId:identity:updatedAt:)` when no remote exists
+   - `.resolvedRemote(repoId:raw:identity:updatedAt:)` when a remote is known
+   - `raw` contains git facts (`origin`, `upstream`), `identity` contains projection fields (`groupKey`, `remoteSlug`, `organizationName`, `displayName`)
+3. `RepoSidebarContentView` groups only resolved repos. `awaitingOrigin` repos render in the disabled `Scanning...` section until they graduate into resolved local or resolved remote groups.
 4. `ForgeEvent.pullRequestCountsChanged(repoId:countsByBranch:)` is mapped by `(repoId, branch)` in `WorkspaceCacheCoordinator` to prevent cross-repo branch-name contamination (for example, two unrelated `main` branches).
 
 **Decision tree (what we considered):**
@@ -206,6 +209,36 @@ SwiftPaneView           (direct Swift)             SwiftPaneRuntime             
 2. Keeps filesystem batching logic in one place (`FilesystemActor`).
 3. Makes git state a derived projection that can coalesce by `worktreeId` and publish stable materialized snapshots.
 4. Keeps remote git/forge concerns out of local working-directory projection.
+
+**Direct command boundary rule:**
+
+```text
+event-plane communication -> EventBus facts
+command-plane communication -> direct calls through focused capability protocols
+```
+
+Example:
+
+```text
+AppDelegate
+  |
+  v
+WatchedFolderCommandHandling
+  |
+  v
+FilesystemGitPipeline
+  |
+  v
+FilesystemActor
+```
+
+This is deliberate:
+
+```text
+- concrete pipeline ownership stays in the composition root
+- feature code should not store concrete actor/pipeline types when a smaller capability will do
+- do not invent a generic command executor abstraction just because multiple systems accept commands
+```
 
 ### D8: Execution backend as pane configuration, not pane type (JTBD 7, JTBD 8)
 
@@ -234,8 +267,8 @@ SwiftPaneView           (direct Swift)             SwiftPaneRuntime             
 | Tier | Service | Scope | Event types | Envelope | Backend model |
 |------|---------|-------|-------------|----------|---------------|
 | **Built-in** | FilesystemActor | Per-worktree | `FilesystemEvent` (filesChanged, worktreeRegistered, worktreeUnregistered) | `WorktreeEnvelope` | Core, one watcher per worktree |
-| **Built-in** | AppDelegate | App-wide | `TopologyEvent` (.repoDiscovered — boot replay, .repoRemoved) | `SystemEnvelope` | Core (via bus) |
-| **Built-in** | FilesystemActor | App-wide | `TopologyEvent` (.repoDiscovered — watched folder rescan, .worktreeRegistered, .worktreeUnregistered) | `SystemEnvelope` | Core (via bus) |
+| **Built-in** | AppDelegate | App-wide | `TopologyEvent` (.repoDiscovered — boot replay) | `SystemEnvelope` | Core (via bus) |
+| **Built-in** | FilesystemActor | App-wide | `TopologyEvent` (.repoDiscovered — watched folder diff, .repoRemoved — watched folder diff, .worktreeRegistered, .worktreeUnregistered) | `SystemEnvelope` | Core (via bus) |
 | **Built-in** | GitWorkingDirectoryProjector | Per-worktree | `GitWorkingDirectoryEvent` (snapshotChanged, branchChanged, originChanged, worktreeDiscovered, worktreeRemoved) | `WorktreeEnvelope` | Core projector |
 | **Built-in** | Security backend | Per-worktree | `SecurityEvent` (future) | `WorktreeEnvelope` | Core |
 | **Built-in** | PaneCoordinator | App-wide | `LifecycleEvent` (tabSwitched, etc.) | `SystemEnvelope` | Core |
@@ -713,8 +746,8 @@ Sources are categorized by scope. Topology sources use `SystemEnvelope`; worktre
 | **Pane** | BridgeRuntime | — | `PaneEnvelope` | `.diff(...)`, `.editor(...)`, `.review(...)`, `.agent(...)`, `.plugin(...)` | Future (LUNA-349) |
 | **Pane** | WebviewRuntime | — | `PaneEnvelope` | `.browser(BrowserEvent)` | Future (LUNA-349) |
 | **Pane** | SwiftPaneRuntime | — | `PaneEnvelope` | Content-dependent | Future (LUNA-349) |
-| **App** | AppDelegate | Built-in | `SystemEnvelope` | `TopologyEvent` (.repoDiscovered — boot, .repoRemoved) | Via bus |
-| **App** | FilesystemActor | Built-in | `SystemEnvelope` | `TopologyEvent` (.repoDiscovered — rescan, .worktreeRegistered, .worktreeUnregistered) | Via bus |
+| **App** | AppDelegate | Built-in | `SystemEnvelope` | `TopologyEvent` (.repoDiscovered — boot replay) | Via bus |
+| **App** | FilesystemActor | Built-in | `SystemEnvelope` | `TopologyEvent` (.repoDiscovered — watched-folder diff, .repoRemoved — watched-folder diff, .worktreeRegistered, .worktreeUnregistered) | Via bus |
 | **Worktree** | FilesystemActor | Built-in | `WorktreeEnvelope` | `FilesystemEvent` (.filesChanged, .worktreeRegistered, .worktreeUnregistered) | Future (LUNA-349, Contract 6) |
 | **Worktree** | GitWorkingDirectoryProjector | Built-in | `WorktreeEnvelope` | `GitWorkingDirectoryEvent` (.snapshotChanged, .branchChanged, .originChanged, .worktreeDiscovered, .worktreeRemoved) | Future (LUNA-349) |
 | **App** | PaneCoordinator | Built-in | `SystemEnvelope` | `.lifecycle(.tabSwitched)` | ✅ Implemented |

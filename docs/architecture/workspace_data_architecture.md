@@ -90,16 +90,24 @@ Pane references: `Pane.metadata.facets.worktreeId` references `CanonicalWorktree
 ### Tier B: Cache Models
 
 ```swift
-/// Enrichment data for a canonical repo. Derived from git remote inspection.
-struct RepoEnrichment: Codable, Sendable, Equatable {
+/// Repo identity resolution is explicit. The cache distinguishes
+/// "still resolving", "confirmed local-only", and "resolved remote".
+enum RepoEnrichment: Codable, Sendable, Equatable {
+    case awaitingOrigin(repoId: UUID)
+    case resolvedLocal(repoId: UUID, identity: RepoIdentity, updatedAt: Date)
+    case resolvedRemote(repoId: UUID, raw: RawRepoOrigin, identity: RepoIdentity, updatedAt: Date)
+}
+
+struct RawRepoOrigin: Codable, Sendable, Equatable {
+    var origin: String
+    var upstream: String?
+}
+
+struct RepoIdentity: Codable, Sendable, Equatable {
+    var groupKey: String
+    var remoteSlug: String?
     var organizationName: String?
-    var origin: String?            // normalized remote URL
-    var upstream: String?          // normalized remote URL
-    var remoteSlug: String?        // "owner/repo" extracted from remote
-    var groupKey: String           // "remote:<normalized>" or "common:<dir>" or "path:<path>"
-    var displayName: String        // "repo-name · org-name" for sidebar
-    var remoteFingerprint: String? // normalized remote for dedup
-    var worktreeCommonDirectory: String?  // git common dir for worktree grouping
+    var displayName: String
 }
 
 /// Enrichment data for a canonical worktree. Derived from git status/branch.
@@ -153,7 +161,7 @@ FilesystemActor (raw filesystem I/O)
 GitWorkingDirectoryProjector (local git enrichment)
   subscribes to .filesystem(.filesChanged)
   runs: git status, git branch, git remote, git worktree list
-  emits: .snapshotChanged, .branchChanged, .originChanged
+  emits: .snapshotChanged, .branchChanged, .originChanged, .originUnavailable
          .worktreeDiscovered, .worktreeRemoved
       │
       │ posts to EventBus
@@ -232,7 +240,7 @@ handleTopology_*    — CANONICAL mutations (WorkspaceStore)
   Touches: WorkspaceStore (register/unregister repos+worktrees)
 
 handleEnrichment_*  — DERIVED cache writes (WorkspaceRepoCache only)
-  Events: .snapshotChanged, .branchChanged, .originChanged,
+  Events: .snapshotChanged, .branchChanged, .originChanged, .originUnavailable,
           .pullRequestCountsChanged, .checksUpdated
   Touches: WorkspaceRepoCache only
 
@@ -247,7 +255,7 @@ Method naming convention makes responsibility explicit. If coordinator grows too
 
 `RepoScanner` walks the filesystem from a root URL, stops at the first `.git` boundary (file or directory), caps depth at `RepoScanner.defaultMaxDepth` (4 levels), skips hidden directories and symlinks, validates with `git rev-parse --is-inside-work-tree`, and excludes submodules via `--show-superproject-working-tree`.
 
-Currently used as a one-shot scan when the user clicks "Add Folder." A planned enhancement will persist the folder path as a `WatchedPath` and rescan periodically — see `docs/plans/2026-03-02-persistent-watched-path-folder-watching.md`.
+Used by `FilesystemActor` as the blocking filesystem walk behind watched-folder refresh. Add Folder no longer calls `RepoScanner` directly from `AppDelegate`; the scan is owned by the watched-folder command path.
 
 > **File:** `Infrastructure/RepoScanner.swift`
 
@@ -255,8 +263,8 @@ Currently used as a one-shot scan when the user clicks "Add Folder." A planned e
 
 ```
 TopologyEvent (envelope: SystemEnvelope, all via bus)
-  .repoDiscovered(repoPath:, parentPath:)   — producer: AppDelegate (boot replay), FilesystemActor (watched folder rescan)
-  .repoRemoved(repoPath:)                   — producer: AppDelegate
+  .repoDiscovered(repoPath:, parentPath:)   — producer: AppDelegate (boot replay), FilesystemActor (watched folder diff)
+  .repoRemoved(repoPath:)                   — producer: FilesystemActor (watched folder diff)
   .worktreeRegistered(worktreeId:, repoId:, rootPath:) — producer: FilesystemActor
   .worktreeUnregistered(worktreeId:, repoId:)          — producer: FilesystemActor
 
@@ -269,6 +277,7 @@ GitWorkingDirectoryEvent (producer: GitWorkingDirectoryProjector, envelope: Work
   .snapshotChanged(snapshot:)
   .branchChanged(worktreeId:, repoId:, from:, to:)
   .originChanged(repoId:, from:, to:)
+  .originUnavailable(repoId:)
   .worktreeDiscovered(repoId:, worktreePath:, branch:, isMain:)
   .worktreeRemoved(repoId:, worktreePath:)
   .diffAvailable(diffId:, worktreeId:, repoId:)
@@ -330,21 +339,25 @@ Boot replay uses the same `.repoDiscovered` event and same coordinator code path
 
 ```
 1. User: File → Add Folder → selects /projects
-2. RepoScanner().scanForGitRepos(in: /projects)
-   - Walks filesystem, stops at .git boundary, skips submodules
-3. For each discovered repo path:
-   → AppDelegate posts .addRepoAtPathRequested(path:) via AppEventBus
-4. addRepoIfNeeded(path) for each:
-   a. Dedup check (skip if path matches existing worktree)
-   b. Emit .repoDiscovered on RuntimeEventBus via makeTopologyEnvelope()
-5. WorkspaceCacheCoordinator.handleTopology(.repoDiscovered):
+2. AppDelegate persists watched scope:
+   → store.addWatchedPath(/projects)
+3. AppDelegate calls watched-folder command:
+   → refreshWatchedFolders(paths: store.watchedPaths.map(\.path))
+4. FilesystemActor performs the authoritative scan:
+   a. Reconcile watched-folder registrations
+   b. Scan watched roots via RepoScanner
+   c. Diff current repo set against prior baseline
+   d. Emit .repoDiscovered / .repoRemoved on RuntimeEventBus
+   e. Return WatchedFolderRefreshSummary to caller
+5. AppDelegate uses returned summary for immediate UX:
+   a. If zero repos under /projects → show empty-folder alert
+   b. Does NOT emit topology facts directly
+6. WorkspaceCacheCoordinator.handleTopology(.repoDiscovered):
    a. Idempotent check by stableKey — skip if repo already exists
-   b. Seed enrichment to .unresolved in WorkspaceRepoCache
-6. PaneCoordinator.syncFilesystemRootsAndActivity() — register with actors
-7. Actors start producing enrichment events → cache updates → sidebar renders
+   b. Seed enrichment to .awaitingOrigin in WorkspaceRepoCache
+7. PaneCoordinator reacts from topology facts and syncs registered worktree roots
+8. Actors start producing enrichment events → cache updates → sidebar renders
 ```
-
-> **Planned enhancement:** Persist the folder as a `WatchedPath` so FilesystemActor can rescan periodically for newly cloned repos. See `docs/plans/2026-03-02-persistent-watched-path-folder-watching.md`.
 
 ### User Adds a Repo (implemented)
 
@@ -434,26 +447,21 @@ func handleAddFolderRequested(path: URL) async {
     // 2. Persist the watched path (direct store mutation)
     store.addWatchedPath(rootURL)
 
-    // 3. Tell FilesystemActor to start watching (via scopeSyncHandler)
-    await workspaceCacheCoordinator.syncScope(
-        .updateWatchedFolders(paths: store.watchedPaths.map(\.path))
+    // 3. Call the focused watched-folder command surface.
+    // Do not depend on the concrete FilesystemGitPipeline type here.
+    let refreshSummary = await watchedFolderCommands.refreshWatchedFolders(
+        store.watchedPaths.map(\.path)
     )
 
-    // 4. One-shot scan for immediate feedback
-    let repoPaths = RepoScanner().scanForGitRepos(in: rootURL)
-
-    // 5. Post topology facts via bus (unified pathway)
-    let bus = PaneRuntimeEventBus.shared
-    for repoPath in repoPaths {
-        await bus.post(
-            Self.makeTopologyEnvelope(repoPath: repoPath, source: .builtin(.coordinator))
-        )
+    // 4. Use the returned summary for immediate UX only.
+    // Topology facts come from FilesystemActor, not AppDelegate.
+    let repoPaths = refreshSummary.repoPaths(in: rootURL)
+    if repoPaths.isEmpty {
+        showEmptyFolderAlert(for: rootURL)
     }
-
-    paneCoordinator.syncFilesystemRootsAndActivity()
 }
 
-// 6. WorkspaceCacheCoordinator's bus subscription picks up .repoDiscovered:
+// 5. WorkspaceCacheCoordinator's bus subscription picks up topology facts:
 func handleTopology(_ event: TopologyEvent) {
     switch event {
     case .repoDiscovered(let repoPath, _):
@@ -463,21 +471,60 @@ func handleTopology(_ event: TopologyEvent) {
         }
         if let repo = existingRepo {
             if repoCache.repoEnrichmentByRepoId[repo.id] == nil {
-                repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
+                repoCache.setRepoEnrichment(.awaitingOrigin(repoId: repo.id))
             }
         } else {
             let repo = workspaceStore.addRepo(at: repoPath)
-            repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
+            repoCache.setRepoEnrichment(.awaitingOrigin(repoId: repo.id))
         }
     }
 }
 
-// 7. Later, GitProjector emits .snapshotChanged, .branchChanged
-// 8. WorkspaceCacheCoordinator writes enrichment to WorkspaceRepoCache
-// 9. Sidebar re-renders via @Observable
+// 6. Later, GitProjector emits .snapshotChanged, .branchChanged
+// 7. WorkspaceCacheCoordinator writes enrichment to WorkspaceRepoCache
+// 8. Sidebar re-renders via @Observable
 ```
 
-The pattern is: **persist user intent → notify actors via scope sync → scan and post facts via bus → coordinator processes all topology uniformly**.
+The pattern is: **persist user intent → call watched-folder command → actor scans once and posts facts via bus → coordinator processes all topology uniformly**.
+
+### Capability Protocol Rule
+
+The actor or pipeline that owns the work is not automatically the type that
+feature code should depend on.
+
+```text
+concurrency boundary != dependency boundary
+```
+
+Use focused capability protocols for direct commands:
+
+```text
+AppDelegate
+  |
+  v
+WatchedFolderCommandHandling
+  |
+  v
+FilesystemGitPipeline
+  |
+  v
+FilesystemActor
+```
+
+This keeps the caller's dependency honest:
+
+```text
+AppDelegate may ask for watched-folder refresh.
+AppDelegate may not reach into unrelated pipeline methods.
+```
+
+Composition-root rule:
+
+```text
+- composition root may know the concrete pipeline type
+- feature consumers should store only the focused capability they need
+- do not introduce a generic command executor abstraction
+```
 
 ### Topology Intake: Single Bus Pathway
 
@@ -492,10 +539,15 @@ User: "Watch /projects"
 AppDelegate ──► store.addWatchedPath(/projects)     [authority persisted]
          │
          ▼
-scopeSyncHandler ──► FilesystemActor                [delegation]
+WatchedFolderCommandHandling ──► FilesystemActor    [direct command]
+         │
+         ├── return WatchedFolderRefreshSummary     [command result]
          │
          ▼
-FilesystemActor ──► bus.post(.repoDiscovered)       [reports results]
+AppDelegate uses summary for immediate UX           [empty-folder alert]
+         │
+         ▼
+FilesystemActor ──► bus.post(.repoDiscovered/.repoRemoved) [reports facts]
          │
          ▼
 Bus ──► WorkspaceCacheCoordinator                   [single intake]
@@ -519,7 +571,7 @@ Boot: restore() loads watchedPaths + repos
 Bus ──► Coordinator (single intake, dedup by stableKey)
 ```
 
-**Constraint:** FilesystemActor may emit `.repoDiscovered` only for paths under a persisted watched scope (`store.watchedPaths`). This is structurally enforced — `rescanAllWatchedFolders()` scans only `watchedFolderIds` paths. The `parentPath` field on the event provides traceability back to the watched scope without coupling the event type to `WatchedPath.id`.
+**Constraint:** FilesystemActor may emit `.repoDiscovered` and `.repoRemoved` only for paths under a persisted watched scope (`store.watchedPaths`). This is structurally enforced — watched-folder refresh scans only `watchedFolderIds` paths and diffs against the actor-owned baseline for those roots. The `parentPath` field on `.repoDiscovered` provides traceability back to the watched scope without coupling the event type to `WatchedPath.id`.
 
 ### What NOT to Do
 
@@ -527,7 +579,7 @@ Bus ──► Coordinator (single intake, dedup by stableKey)
 - **Do not route store mutations through the bus.** The bus carries facts, not instructions.
 - **Do not create separate command/event types for the same action.** One event type per fact.
 - **Do not build CQRS-style read/write segregation.** Both stores are read/write via their own methods.
-- **Actors may emit `.repoDiscovered` only within user-authorized watched-folder scopes.** `FilesystemActor` rescans persisted `WatchedPath` folders and posts discoveries on the bus. This is not autonomous discovery — the user delegated authority via Add Folder. All topology events flow through the unified bus pathway.
+- **Actors may emit `.repoDiscovered` and `.repoRemoved` only within user-authorized watched-folder scopes.** `FilesystemActor` rescans persisted `WatchedPath` folders, diffs against its prior baseline, and posts topology facts on the bus. This is not autonomous discovery — the user delegated authority via Add Folder. All topology events flow through the unified bus pathway.
 
 ### Idempotency Contract
 
@@ -566,7 +618,7 @@ Test the full event flow: emit an event → coordinator processes it → assert 
         )
         coordinator.consume(envelope)
 
-        // Assert — cache has unresolved enrichment for the repo
+        // Assert — cache is waiting for origin resolution for the repo
         let repo = store.repos.first!
         let enrichment = repoCache.repoEnrichmentByRepoId[repo.id]
         #expect(enrichment != nil)

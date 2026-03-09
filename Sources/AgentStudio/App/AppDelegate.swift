@@ -58,6 +58,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var workspaceRepoCache: WorkspaceRepoCache!
     private var workspaceUIStore: WorkspaceUIStore!
     private var workspaceCacheCoordinator: WorkspaceCacheCoordinator!
+    private var watchedFolderCommands: (any WatchedFolderCommandHandling)!
     private var viewRegistry: ViewRegistry!
     private var paneCoordinator: PaneCoordinator!
     private var executor: ActionExecutor!
@@ -175,6 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             fseventStreamClient: DarwinFSEventStreamClient()
         )
         filesystemSource = pipeline
+        watchedFolderCommands = pipeline
         paneCoordinator = PaneCoordinator(
             store: store,
             viewRegistry: viewRegistry,
@@ -848,15 +850,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 1. Persist the watched path (direct store mutation)
         store.addWatchedPath(rootURL)
 
-        // 2. Tell FilesystemActor to start watching (via scopeSyncHandler)
-        await workspaceCacheCoordinator.syncScope(
-            .updateWatchedFolders(paths: store.watchedPaths.map(\.path))
+        // The watched-folder command returns the authoritative scan summary.
+        // Do not infer the result from store.repos here because coordinator
+        // consumption also runs on MainActor and may not have drained the bus yet.
+        let refreshSummary = await watchedFolderCommands.refreshWatchedFolders(
+            store.watchedPaths.map(\.path)
         )
-
-        // 3. One-shot scan for immediate feedback (kept for responsiveness)
-        let repoPaths = await Task(priority: .userInitiated) {
-            RepoScanner().scanForGitRepos(in: rootURL)
-        }.value
+        let repoPaths = refreshSummary.repoPaths(in: rootURL)
 
         guard !repoPaths.isEmpty else {
             let alert = NSAlert()
@@ -868,18 +868,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alert.runModal()
             return
         }
-
-        // 4. Post topology facts via bus (unified pathway)
-        let bus = PaneRuntimeEventBus.shared
-        for repoPath in repoPaths {
-            await bus.post(
-                Self.makeTopologyEnvelope(
-                    repoPath: repoPath.standardizedFileURL,
-                    source: .builtin(.coordinator)
-                )
-            )
-        }
-        paneCoordinator.syncFilesystemRootsAndActivity()
     }
 
     private func addRepoIfNeeded(_ path: URL) async {

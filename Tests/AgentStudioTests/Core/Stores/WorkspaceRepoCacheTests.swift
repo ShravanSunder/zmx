@@ -13,7 +13,7 @@ final class WorkspaceRepoCacheTests {
         let repoId = UUID()
         let worktreeId = UUID()
 
-        let repoEnrichment = RepoEnrichment.resolved(
+        let repoEnrichment = RepoEnrichment.resolvedRemote(
             repoId: repoId,
             raw: RawRepoOrigin(origin: "git@github.com:askluna/agent-studio.git", upstream: nil),
             identity: RepoIdentity(
@@ -43,7 +43,7 @@ final class WorkspaceRepoCacheTests {
         let repoId = UUID()
         let worktreeId = UUID()
 
-        store.setRepoEnrichment(.unresolved(repoId: repoId))
+        store.setRepoEnrichment(.awaitingOrigin(repoId: repoId))
         store.setWorktreeEnrichment(.init(worktreeId: worktreeId, repoId: repoId, branch: "feature"))
         store.setPullRequestCount(2, for: worktreeId)
         store.setNotificationCount(5, for: worktreeId)

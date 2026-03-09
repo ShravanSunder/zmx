@@ -51,6 +51,7 @@ enum GitWorkingDirectoryEvent: Sendable {
     case snapshotChanged(snapshot: GitWorkingTreeSnapshot)
     case branchChanged(worktreeId: UUID, repoId: UUID, from: String, to: String)
     case originChanged(repoId: UUID, from: String, to: String)
+    case originUnavailable(repoId: UUID)
     case worktreeDiscovered(repoId: UUID, worktreePath: URL, branch: String, isMain: Bool)
     case worktreeRemoved(repoId: UUID, worktreePath: URL)
     case diffAvailable(diffId: UUID, worktreeId: UUID, repoId: UUID)

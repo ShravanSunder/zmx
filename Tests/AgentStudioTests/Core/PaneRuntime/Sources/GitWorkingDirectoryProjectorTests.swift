@@ -1,3 +1,5 @@
+// swiftlint:disable file_length type_body_length
+
 import Foundation
 import Testing
 
@@ -959,6 +961,8 @@ private actor ObservedGitEvents {
             branchEventsByWorktreeId[worktreeId, default: []].append((from, to))
         case .originChanged(let repoId, let from, let to):
             originEventsByRepoId[repoId, default: []].append((from, to))
+        case .originUnavailable(let repoId):
+            originEventsByRepoId[repoId, default: []].append(("", ""))
         case .worktreeDiscovered, .worktreeRemoved, .diffAvailable:
             return
         }

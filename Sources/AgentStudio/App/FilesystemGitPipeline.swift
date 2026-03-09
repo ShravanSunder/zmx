@@ -1,10 +1,22 @@
 import Foundation
 
+struct WatchedFolderRefreshSummary: Sendable, Equatable {
+    let repoPathsByWatchedFolder: [URL: [URL]]
+
+    func repoPaths(in watchedFolder: URL) -> [URL] {
+        repoPathsByWatchedFolder[watchedFolder.standardizedFileURL, default: []]
+    }
+}
+
+protocol WatchedFolderCommandHandling: AnyObject, Sendable {
+    func refreshWatchedFolders(_ paths: [URL]) async -> WatchedFolderRefreshSummary
+}
+
 /// Composition root for app-wide filesystem facts + derived local git facts.
 ///
 /// `FilesystemActor` owns filesystem ingestion/routing and emits filesystem facts.
 /// `GitWorkingDirectoryProjector` subscribes to those facts and emits git snapshot projections.
-final class FilesystemGitPipeline: PaneCoordinatorFilesystemSourceManaging, Sendable {
+final class FilesystemGitPipeline: PaneCoordinatorFilesystemSourceManaging, WatchedFolderCommandHandling, Sendable {
     private let filesystemActor: FilesystemActor
     private let gitWorkingDirectoryProjector: GitWorkingDirectoryProjector
     private let forgeActor: ForgeActor
@@ -81,6 +93,10 @@ final class FilesystemGitPipeline: PaneCoordinatorFilesystemSourceManaging, Send
         await filesystemActor.enqueueRawPaths(worktreeId: worktreeId, paths: paths)
     }
 
+    func refreshWatchedFolders(_ paths: [URL]) async -> WatchedFolderRefreshSummary {
+        await filesystemActor.refreshWatchedFolders(paths)
+    }
+
     func applyScopeChange(_ change: ScopeChange) async {
         switch change {
         case .registerForgeRepo(let repoId, let remote):
@@ -90,7 +106,7 @@ final class FilesystemGitPipeline: PaneCoordinatorFilesystemSourceManaging, Send
         case .refreshForgeRepo(let repoId, let correlationId):
             await forgeActor.refresh(repo: repoId, correlationId: correlationId)
         case .updateWatchedFolders(let paths):
-            await filesystemActor.updateWatchedFolders(paths)
+            _ = await filesystemActor.refreshWatchedFolders(paths)
         }
     }
 }

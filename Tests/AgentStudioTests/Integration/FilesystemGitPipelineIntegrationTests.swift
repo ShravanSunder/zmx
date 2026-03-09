@@ -147,6 +147,7 @@ struct FilesystemGitPipelineIntegrationTests {
             scopeSyncHandler: { _ in }
         )
         cacheCoordinator.startConsuming()
+        await waitForSubscriber(bus: bus, minimumCount: 1)
         defer { cacheCoordinator.stopConsuming() }
 
         await pipeline.register(worktreeId: worktreeId, repoId: repoId, rootPath: rootPath)
@@ -206,16 +207,16 @@ struct FilesystemGitPipelineIntegrationTests {
 
     @Test("pipeline retries origin discovery after initial empty origin and converges to remote identity")
     func pipelineRetriesOriginDiscoveryAfterInitialEmptyOrigin() async throws {
-        func status(origin: String?) -> GitWorkingTreeStatus {
+        func status(originResolution: GitOriginResolution) -> GitWorkingTreeStatus {
             GitWorkingTreeStatus(
                 summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
                 branch: "main",
-                origin: origin
+                originResolution: originResolution
             )
         }
 
         let bus = EventBus<RuntimeEnvelope>()
-        let provider = MutableGitWorkingTreeStatusProvider(status: status(origin: nil))
+        let provider = MutableGitWorkingTreeStatusProvider(status: status(originResolution: .awaitingResolution))
         let pipeline = FilesystemGitPipeline(
             bus: bus,
             gitWorkingTreeProvider: provider,
@@ -250,26 +251,27 @@ struct FilesystemGitPipelineIntegrationTests {
             scopeSyncHandler: { _ in }
         )
         coordinator.startConsuming()
+        await waitForSubscriber(bus: bus, minimumCount: 1)
         defer { coordinator.stopConsuming() }
 
         await pipeline.register(worktreeId: worktreeId, repoId: repo.id, rootPath: rootPath)
 
         let initialSnapshotConverged = await eventually(
             "initial registration should produce a git snapshot before origin retry",
-            maxAttempts: 600
+            maxAttempts: 1200
         ) {
             repoCache.worktreeEnrichmentByWorktreeId[worktreeId]?.branch == "main"
         }
         #expect(initialSnapshotConverged)
 
-        await provider.setStatus(status(origin: "git@github.com:askluna/agent-studio.git"))
+        await provider.setStatus(status(originResolution: .resolved("git@github.com:askluna/agent-studio.git")))
         await pipeline.enqueueRawPathsForTesting(worktreeId: worktreeId, paths: [".git/config"])
 
         let remoteIdentityConverged = await eventually(
             "git config change should trigger origin retry and remote identity",
-            maxAttempts: 600
+            maxAttempts: 1200
         ) {
-            guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
+            guard case .some(.resolvedRemote(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
             else {
                 return false
             }
@@ -296,6 +298,21 @@ struct FilesystemGitPipelineIntegrationTests {
         }
         Issue.record("\(description) timed out")
         return false
+    }
+
+    private func waitForSubscriber(
+        bus: EventBus<RuntimeEnvelope>,
+        minimumCount: Int,
+        maxAttempts: Int = 100
+    ) async {
+        for _ in 0..<maxAttempts {
+            if await bus.subscriberCount >= minimumCount {
+                return
+            }
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        Issue.record("Expected bus subscriber count >= \(minimumCount)")
     }
 }
 

@@ -264,6 +264,8 @@ final class EventReplayBuffer {
             return 24 + from.utf8.count + to.utf8.count
         case .originChanged(_, let from, let to):
             return 24 + from.utf8.count + to.utf8.count
+        case .originUnavailable:
+            return 24
         case .worktreeDiscovered(_, let worktreePath, let branch, _):
             return 24 + worktreePath.path.utf8.count + branch.utf8.count
         case .worktreeRemoved(_, let worktreePath):

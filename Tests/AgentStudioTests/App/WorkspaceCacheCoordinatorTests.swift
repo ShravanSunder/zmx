@@ -37,7 +37,7 @@ final class WorkspaceCacheCoordinatorTests {
             Issue.record("Expected discovered repo to be added")
             return
         }
-        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id))
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == .awaitingOrigin(repoId: repo.id))
     }
 
     @Test
@@ -303,7 +303,7 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
-        guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
+        guard case .some(.resolvedRemote(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
             Issue.record("Expected resolved enrichment")
             return
         }
@@ -315,7 +315,7 @@ final class WorkspaceCacheCoordinatorTests {
     }
 
     @Test
-    func enrichment_originChanged_emptyOriginDerivesLocalIdentity() {
+    func enrichment_originChanged_emptyOriginDoesNotResolveLocalIdentity() {
         let workspaceStore = makeWorkspaceStore()
         let repoCache = WorkspaceRepoCache()
         let coordinator = WorkspaceCacheCoordinator(
@@ -325,7 +325,8 @@ final class WorkspaceCacheCoordinatorTests {
             scopeSyncHandler: { _ in }
         )
 
-        let repo = workspaceStore.addRepo(at: URL(fileURLWithPath: "/tmp/MyProject"))
+        let repo = workspaceStore.addRepo(at: URL(fileURLWithPath: "/tmp/luna-empty-origin"))
+        repoCache.setRepoEnrichment(.awaitingOrigin(repoId: repo.id))
 
         coordinator.handleEnrichment(
             WorktreeEnvelope.test(
@@ -341,11 +342,37 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
-        guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == .awaitingOrigin(repoId: repo.id))
+    }
+
+    @Test
+    func enrichment_originUnavailableDerivesLocalIdentity() {
+        let workspaceStore = makeWorkspaceStore()
+        let repoCache = WorkspaceRepoCache()
+        let coordinator = WorkspaceCacheCoordinator(
+            bus: EventBus<RuntimeEnvelope>(),
+            workspaceStore: workspaceStore,
+            repoCache: repoCache,
+            scopeSyncHandler: { _ in }
+        )
+
+        let repo = workspaceStore.addRepo(at: URL(fileURLWithPath: "/tmp/MyProject"))
+
+        coordinator.handleEnrichment(
+            WorktreeEnvelope.test(
+                event: .gitWorkingDirectory(
+                    .originUnavailable(repoId: repo.id)
+                ),
+                repoId: repo.id,
+                source: .system(.builtin(.gitWorkingDirectoryProjector))
+            )
+        )
+
+        guard case .some(.resolvedLocal(_, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
             Issue.record("Expected resolved local enrichment")
             return
         }
-        #expect(raw.origin == nil)
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id]?.raw?.origin == nil)
         #expect(identity.groupKey == "local:MyProject")
         #expect(identity.remoteSlug == nil)
     }

@@ -7,6 +7,12 @@ import SwiftUI
 /// Redesigned sidebar content grouped by repository identity (worktree family / remote).
 @MainActor
 struct RepoSidebarContentView: View {
+    struct SidebarProjection {
+        let resolvedGroups: [SidebarRepoGroup]
+        let loadingRepos: [SidebarRepo]
+        let showsNoResults: Bool
+    }
+
     let store: WorkspaceStore
     let repoCache: WorkspaceRepoCache
     let uiStore: WorkspaceUIStore
@@ -38,28 +44,24 @@ struct RepoSidebarContentView: View {
         store.repos.map(SidebarRepo.init(repo:))
     }
 
-    private var reposFingerprint: String {
-        sidebarRepos.map { repo in
-            let worktreeFingerprint = repo.worktrees.map { $0.path.standardizedFileURL.path }.sorted().joined(
-                separator: ",")
-            return "\(repo.id.uuidString):\(repo.repoPath.standardizedFileURL.path):\(worktreeFingerprint)"
-        }
-        .joined(separator: "|")
+    private var sidebarProjectionFingerprint: String {
+        Self.projectionFingerprint(for: sidebarProjection)
     }
 
-    private var filteredRepos: [SidebarRepo] {
-        SidebarFilter.filter(repos: sidebarRepos, query: debouncedQuery)
-    }
-
-    private var repoMetadataById: [UUID: RepoIdentityMetadata] {
-        Self.buildRepoMetadata(
+    private var sidebarProjection: SidebarProjection {
+        Self.projectSidebar(
             repos: sidebarRepos,
-            repoEnrichmentByRepoId: repoCache.repoEnrichmentByRepoId
+            repoEnrichmentByRepoId: repoCache.repoEnrichmentByRepoId,
+            query: debouncedQuery
         )
     }
 
     private var groups: [SidebarRepoGroup] {
-        SidebarRepoGrouping.buildGroups(repos: filteredRepos, metadataByRepoId: repoMetadataById)
+        sidebarProjection.resolvedGroups
+    }
+
+    private var loadingReposList: [SidebarRepo] {
+        sidebarProjection.loadingRepos
     }
 
     private var isFiltering: Bool {
@@ -79,7 +81,7 @@ struct RepoSidebarContentView: View {
                 filterBar
             }
 
-            if isFiltering && groups.isEmpty {
+            if sidebarProjection.showsNoResults {
                 noResultsView
             } else {
                 groupList
@@ -312,8 +314,38 @@ struct RepoSidebarContentView: View {
                     }
                 }
             }
+
+            if !loadingReposList.isEmpty {
+                Section {
+                    ForEach(loadingReposList) { repo in
+                        HStack(spacing: AppStyle.spacingStandard) {
+                            Text(repo.name)
+                                .font(.system(size: AppStyle.textBase))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .listRowInsets(
+                            EdgeInsets(
+                                top: 0,
+                                leading: AppStyle.sidebarListRowLeadingInset,
+                                bottom: 0,
+                                trailing: 0
+                            )
+                        )
+                    }
+                } header: {
+                    HStack(spacing: AppStyle.spacingTight) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Scanning...")
+                            .font(.system(size: AppStyle.textXs, weight: .medium))
+                    }
+                }
+                .disabled(true)
+            }
         }
         .listStyle(.sidebar)
+        .id(sidebarProjectionFingerprint)
         .transition(.opacity.animation(.easeOut(duration: 0.12)))
     }
 
@@ -948,6 +980,95 @@ struct GitBranchStatus: Equatable, Sendable {
 }
 
 extension RepoSidebarContentView {
+    static func projectionFingerprint(for projection: SidebarProjection) -> String {
+        let resolvedGroupsFingerprint = projection.resolvedGroups.map { group in
+            let repoIds = group.repos.map(\.id.uuidString).joined(separator: ",")
+            return "\(group.id):\(repoIds)"
+        }
+        .joined(separator: "|")
+
+        let loadingFingerprint = projection.loadingRepos
+            .map { "\($0.id.uuidString):\($0.name)" }
+            .joined(separator: "|")
+
+        return """
+        resolved[\(resolvedGroupsFingerprint)]\
+        /loading[\(loadingFingerprint)]\
+        /noResults[\(projection.showsNoResults)]
+        """
+    }
+
+    static func projectSidebar(
+        repos: [SidebarRepo],
+        repoEnrichmentByRepoId: [UUID: RepoEnrichment],
+        query: String
+    ) -> SidebarProjection {
+        let resolvedRepos = resolvedRepos(repos, enrichmentByRepoId: repoEnrichmentByRepoId)
+        let loadingRepos = loadingRepos(repos, enrichmentByRepoId: repoEnrichmentByRepoId)
+        let filteredResolvedRepos = SidebarFilter.filter(repos: resolvedRepos, query: query)
+        let filteredLoadingRepos = filterLoadingRepos(loadingRepos, query: query)
+        let repoMetadataById = buildRepoMetadata(
+            repos: filteredResolvedRepos,
+            repoEnrichmentByRepoId: repoEnrichmentByRepoId
+        )
+        let resolvedGroups = SidebarRepoGrouping.buildGroups(
+            repos: filteredResolvedRepos,
+            metadataByRepoId: repoMetadataById
+        )
+
+        return SidebarProjection(
+            resolvedGroups: resolvedGroups,
+            loadingRepos: filteredLoadingRepos,
+            showsNoResults: !query.isEmpty && resolvedGroups.isEmpty && filteredLoadingRepos.isEmpty
+        )
+    }
+
+    static func resolvedRepos(
+        _ repos: [SidebarRepo],
+        enrichmentByRepoId: [UUID: RepoEnrichment]
+    ) -> [SidebarRepo] {
+        repos.filter { repo in
+            switch enrichmentByRepoId[repo.id] {
+            case .resolvedLocal, .resolvedRemote:
+                return true
+            case .awaitingOrigin, .none:
+                return false
+            }
+        }
+    }
+
+    static func loadingRepos(
+        _ repos: [SidebarRepo],
+        enrichmentByRepoId: [UUID: RepoEnrichment]
+    ) -> [SidebarRepo] {
+        repos.filter { repo in
+            switch enrichmentByRepoId[repo.id] {
+            case .resolvedLocal, .resolvedRemote:
+                return false
+            case .awaitingOrigin, .none:
+                return true
+            }
+        }
+    }
+
+    private static func filterLoadingRepos(
+        _ repos: [SidebarRepo],
+        query: String
+    ) -> [SidebarRepo] {
+        let filteredRepos: [SidebarRepo]
+        if query.isEmpty {
+            filteredRepos = repos
+        } else {
+            filteredRepos = repos.filter { repo in
+                repo.name.localizedCaseInsensitiveContains(query)
+            }
+        }
+
+        return filteredRepos.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
     static func primaryRepoForGroup(_ group: SidebarRepoGroup) -> SidebarRepo? {
         group.repos.max { lhs, rhs in
             let lhsScore = primaryRepoScore(lhs)
@@ -989,21 +1110,21 @@ extension RepoSidebarContentView {
             let remoteSlug: String?
 
             switch enrichment {
-            case .resolved(_, let raw, let identity, _):
+            case .resolvedRemote(_, let raw, let identity, _):
                 groupKey = identity.groupKey
                 displayName = identity.displayName
                 organizationName = identity.organizationName
                 originRemote = raw.origin
                 upstreamRemote = raw.upstream
                 remoteSlug = identity.remoteSlug
-            case .unresolved:
-                groupKey = "pending:\(repo.id.uuidString)"
-                displayName = repo.name
-                organizationName = nil
+            case .resolvedLocal(_, let identity, _):
+                groupKey = identity.groupKey
+                displayName = identity.displayName
+                organizationName = identity.organizationName
                 originRemote = nil
                 upstreamRemote = nil
-                remoteSlug = nil
-            case nil:
+                remoteSlug = identity.remoteSlug
+            case .awaitingOrigin, nil:
                 groupKey = "path:\(normalizedRepoPath)"
                 displayName = repo.name
                 organizationName = nil

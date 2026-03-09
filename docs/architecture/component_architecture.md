@@ -589,7 +589,7 @@ Git worktree management via the `wt` CLI tool. Singleton.
 
 > **File:** `Infrastructure/WorktrunkService.swift`
 >
-> Worktree discovery flows through the enrichment pipeline: `RepoScanner` finds repos → `AppDelegate` emits `.repoDiscovered` → `WorkspaceCacheCoordinator` registers canonical entries in `WorkspaceStore` and seeds enrichment in `WorkspaceRepoCache`. See [Workspace Data Architecture](workspace_data_architecture.md) for the full pipeline.
+> Worktree discovery flows through the enrichment pipeline: AppDelegate persists watched scope and triggers the watched-folder command → `FilesystemActor` scans and emits `.repoDiscovered` / `.repoRemoved` → `WorkspaceCacheCoordinator` registers or marks unavailable canonical entries in `WorkspaceStore` and seeds enrichment in `WorkspaceRepoCache`. See [Workspace Data Architecture](workspace_data_architecture.md) for the full pipeline.
 
 ### 3.12 Command Bar System
 

@@ -341,7 +341,7 @@ final class WorkspacePersistorTests {
         let cacheState = WorkspacePersistor.PersistableCacheState(
             workspaceId: workspaceId,
             repoEnrichmentByRepoId: [
-                repoId: .resolved(
+                repoId: .resolvedRemote(
                     repoId: repoId,
                     raw: RawRepoOrigin(origin: "git@github.com:askluna/agent-studio.git", upstream: nil),
                     identity: RepoIdentity(

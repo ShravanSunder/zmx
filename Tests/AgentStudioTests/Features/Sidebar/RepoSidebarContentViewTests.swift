@@ -6,6 +6,101 @@ import Testing
 @MainActor
 @Suite("RepoSidebarContentView")
 struct RepoSidebarContentViewTests {
+    @Test("sidebar projection separates resolved groups from loading repos")
+    func sidebarProjectionSeparatesResolvedGroupsFromLoadingRepos() {
+        let resolvedId = UUID()
+        let unresolvedId = UUID()
+        let missingId = UUID()
+
+        let resolvedRepo = SidebarRepo(
+            id: resolvedId,
+            name: "resolved-repo",
+            repoPath: URL(fileURLWithPath: "/tmp/resolved-repo"),
+            stableKey: "resolved-repo",
+            worktrees: [Worktree(repoId: resolvedId, name: "main", path: URL(fileURLWithPath: "/tmp/resolved-repo"))]
+        )
+        let unresolvedRepo = SidebarRepo(
+            id: unresolvedId,
+            name: "loading-repo",
+            repoPath: URL(fileURLWithPath: "/tmp/loading-repo"),
+            stableKey: "loading-repo",
+            worktrees: [Worktree(repoId: unresolvedId, name: "main", path: URL(fileURLWithPath: "/tmp/loading-repo"))]
+        )
+        let missingRepo = SidebarRepo(
+            id: missingId,
+            name: "missing-repo",
+            repoPath: URL(fileURLWithPath: "/tmp/missing-repo"),
+            stableKey: "missing-repo",
+            worktrees: [Worktree(repoId: missingId, name: "main", path: URL(fileURLWithPath: "/tmp/missing-repo"))]
+        )
+
+        let projection = RepoSidebarContentView.projectSidebar(
+            repos: [resolvedRepo, unresolvedRepo, missingRepo],
+            repoEnrichmentByRepoId: [
+                resolvedId: .resolvedRemote(
+                    repoId: resolvedId,
+                    raw: RawRepoOrigin(origin: "git@github.com:org/resolved-repo.git", upstream: nil),
+                    identity: RepoIdentity(
+                        groupKey: "remote:org/resolved-repo",
+                        remoteSlug: "org/resolved-repo",
+                        organizationName: "org",
+                        displayName: "resolved-repo"
+                    ),
+                    updatedAt: Date()
+                ),
+                unresolvedId: .awaitingOrigin(repoId: unresolvedId),
+            ],
+            query: ""
+        )
+
+        #expect(projection.resolvedGroups.count == 1)
+        #expect(projection.resolvedGroups.first?.repos.map(\.id) == [resolvedId])
+        #expect(Set(projection.loadingRepos.map(\.id)) == Set([unresolvedId, missingId]))
+        #expect(projection.showsNoResults == false)
+    }
+
+    @Test("sidebar projection keeps loading matches visible during filtering")
+    func sidebarProjectionKeepsLoadingMatchesVisibleDuringFiltering() {
+        let loadingRepo = SidebarRepo(
+            id: UUID(),
+            name: "loading-target",
+            repoPath: URL(fileURLWithPath: "/tmp/loading-target"),
+            stableKey: "loading-target",
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/loading-target"))]
+        )
+
+        let projection = RepoSidebarContentView.projectSidebar(
+            repos: [loadingRepo],
+            repoEnrichmentByRepoId: [:],
+            query: "loading"
+        )
+
+        #expect(projection.resolvedGroups.isEmpty)
+        #expect(projection.loadingRepos.map(\.id) == [loadingRepo.id])
+        #expect(projection.showsNoResults == false)
+    }
+
+    @Test("sidebar projection shows no results only when both sections are empty for a query")
+    func sidebarProjectionShowsNoResultsOnlyWhenBothSectionsAreEmpty() {
+        let loadingRepo = SidebarRepo(
+            id: UUID(),
+            name: "loading-target",
+            repoPath: URL(fileURLWithPath: "/tmp/loading-target"),
+            stableKey: "loading-target",
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/loading-target"))]
+        )
+
+        let projection = RepoSidebarContentView.projectSidebar(
+            repos: [loadingRepo],
+            repoEnrichmentByRepoId: [:],
+            query: "no-match"
+        )
+
+        #expect(projection.resolvedGroups.isEmpty)
+        #expect(projection.loadingRepos.isEmpty)
+        #expect(projection.showsNoResults)
+    }
+
     @Test("branchStatus maps centralized local-git summary + PR count")
     func branchStatusMapsLocalSummaryAndPRCount() {
         let worktreeId = UUID()
@@ -199,41 +294,72 @@ struct RepoSidebarContentViewTests {
         #expect(groups.first?.repos.count == 2)
     }
 
-    @Test("pending bucket grouping supports unresolved repos")
-    func pendingBucketGroupingSupportsUnresolvedRepos() {
+    @Test("projection fingerprint changes when repo graduates from loading to resolved")
+    func projectionFingerprintChangesWhenTopologyChanges() {
         let repo = SidebarRepo(
             id: UUID(),
-            name: "pending-repo",
-            repoPath: URL(fileURLWithPath: "/tmp/pending-repo"),
-            stableKey: "pending",
-            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/pending-repo"))]
+            name: "agent-studio",
+            repoPath: URL(fileURLWithPath: "/tmp/agent-studio"),
+            stableKey: "agent-studio",
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/agent-studio"))]
         )
-        let metadataByRepoId: [UUID: RepoIdentityMetadata] = [
-            repo.id: RepoIdentityMetadata(
-                groupKey: "pending:\(repo.id.uuidString)",
-                displayName: "pending-repo",
-                repoName: "pending-repo",
-                worktreeCommonDirectory: nil,
-                folderCwd: repo.repoPath.path,
-                parentFolder: "tmp",
-                organizationName: nil,
-                originRemote: nil,
-                upstreamRemote: nil,
-                lastPathComponent: "pending-repo",
-                worktreeCwds: repo.worktrees.map(\.path.path),
-                remoteFingerprint: nil,
-                remoteSlug: nil
-            )
-        ]
 
-        let groups = SidebarRepoGrouping.buildGroups(
+        let loadingProjection = RepoSidebarContentView.projectSidebar(
             repos: [repo],
-            metadataByRepoId: metadataByRepoId
+            repoEnrichmentByRepoId: [
+                repo.id: .awaitingOrigin(repoId: repo.id)
+            ],
+            query: ""
+        )
+        let resolvedProjection = RepoSidebarContentView.projectSidebar(
+            repos: [repo],
+            repoEnrichmentByRepoId: [
+                repo.id: .resolvedRemote(
+                    repoId: repo.id,
+                    raw: RawRepoOrigin(origin: "git@github.com:askluna/agent-studio.git", upstream: nil),
+                    identity: RepoIdentity(
+                        groupKey: "remote:askluna/agent-studio",
+                        remoteSlug: "askluna/agent-studio",
+                        organizationName: "askluna",
+                        displayName: "agent-studio"
+                    ),
+                    updatedAt: Date()
+                )
+            ],
+            query: ""
         )
 
-        #expect(groups.count == 1)
-        #expect(groups.first?.id == "pending:\(repo.id.uuidString)")
-        #expect(groups.first?.repos.count == 1)
+        let loadingFingerprint = RepoSidebarContentView.projectionFingerprint(for: loadingProjection)
+        let resolvedFingerprint = RepoSidebarContentView.projectionFingerprint(for: resolvedProjection)
+
+        #expect(loadingFingerprint != resolvedFingerprint)
+        #expect(loadingProjection.loadingRepos.map(\.id) == [repo.id])
+        #expect(resolvedProjection.resolvedGroups.first?.repos.map(\.id) == [repo.id])
+    }
+
+    @Test("repo metadata builder uses resolved local identity when available")
+    func repoMetadataBuilderUsesResolvedLocalIdentity() {
+        let repo = SidebarRepo(
+            id: UUID(),
+            name: "MyProject",
+            repoPath: URL(fileURLWithPath: "/tmp/MyProject"),
+            stableKey: "my-project",
+            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/MyProject"))]
+        )
+
+        let metadata = RepoSidebarContentView.buildRepoMetadata(
+            repos: [repo],
+            repoEnrichmentByRepoId: [
+                repo.id: .resolvedLocal(
+                    repoId: repo.id,
+                    identity: RemoteIdentityNormalizer.localIdentity(repoName: "MyProject"),
+                    updatedAt: Date()
+                )
+            ]
+        )
+
+        #expect(metadata[repo.id]?.groupKey == "local:MyProject")
+        #expect(metadata[repo.id]?.organizationName == nil)
     }
 
     @Test("missing metadata falls back to path grouping key")
@@ -308,7 +434,7 @@ struct RepoSidebarContentViewTests {
         let metadata = RepoSidebarContentView.buildRepoMetadata(
             repos: [repo],
             repoEnrichmentByRepoId: [
-                repo.id: .resolved(
+                repo.id: .resolvedRemote(
                     repoId: repo.id,
                     raw: RawRepoOrigin(origin: "git@github.com:askluna/agent-studio.git", upstream: nil),
                     identity: RepoIdentity(

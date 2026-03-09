@@ -66,7 +66,7 @@ final class WorkspaceCacheCoordinator {
             }
             if let repo = existingRepo {
                 if repoCache.repoEnrichmentByRepoId[repo.id] == nil {
-                    repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
+                    repoCache.setRepoEnrichment(.awaitingOrigin(repoId: repo.id))
                 }
                 if workspaceStore.isRepoUnavailable(repo.id) {
                     _ = workspaceStore.reassociateRepo(
@@ -77,7 +77,7 @@ final class WorkspaceCacheCoordinator {
                 }
             } else {
                 let repo = workspaceStore.addRepo(at: repoPath)
-                repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
+                repoCache.setRepoEnrichment(.awaitingOrigin(repoId: repo.id))
             }
         case .repoRemoved(let repoPath):
             if let repo = workspaceStore.repos.first(where: { $0.repoPath == repoPath }) {
@@ -146,30 +146,28 @@ final class WorkspaceCacheCoordinator {
                 repoCache.setWorktreeEnrichment(enrichment)
             case .originChanged(let repoId, _, let to):
                 let trimmedOrigin = to.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedOrigin.isEmpty else {
+                    Self.logger.error(
+                        "Ignoring empty originChanged for repoId=\(repoId.uuidString, privacy: .public); local-only resolution must arrive via originUnavailable"
+                    )
+                    return
+                }
                 let upstream: String?
-                if case .some(.resolved(_, let raw, _, _)) = repoCache.repoEnrichmentByRepoId[repoId] {
+                if case .some(.resolvedRemote(_, let raw, _, _)) = repoCache.repoEnrichmentByRepoId[repoId] {
                     upstream = raw.upstream
                 } else {
                     upstream = nil
                 }
                 let enrichment: RepoEnrichment
-                if trimmedOrigin.isEmpty {
-                    let repoName = workspaceStore.repos.first(where: { $0.id == repoId })?.name ?? repoId.uuidString
-                    enrichment = .resolved(
-                        repoId: repoId,
-                        raw: RawRepoOrigin(origin: nil, upstream: upstream),
-                        identity: RemoteIdentityNormalizer.localIdentity(repoName: repoName),
-                        updatedAt: Date()
-                    )
-                } else if let identity = RemoteIdentityNormalizer.normalize(trimmedOrigin) {
-                    enrichment = .resolved(
+                if let identity = RemoteIdentityNormalizer.normalize(trimmedOrigin) {
+                    enrichment = .resolvedRemote(
                         repoId: repoId,
                         raw: RawRepoOrigin(origin: trimmedOrigin, upstream: upstream),
                         identity: identity,
                         updatedAt: Date()
                     )
                 } else {
-                    enrichment = .resolved(
+                    enrichment = .resolvedRemote(
                         repoId: repoId,
                         raw: RawRepoOrigin(origin: trimmedOrigin, upstream: upstream),
                         identity: RepoIdentity(
@@ -182,6 +180,15 @@ final class WorkspaceCacheCoordinator {
                     )
                 }
                 repoCache.setRepoEnrichment(enrichment)
+            case .originUnavailable(let repoId):
+                let repoName = workspaceStore.repos.first(where: { $0.id == repoId })?.name ?? repoId.uuidString
+                repoCache.setRepoEnrichment(
+                    .resolvedLocal(
+                        repoId: repoId,
+                        identity: RemoteIdentityNormalizer.localIdentity(repoName: repoName),
+                        updatedAt: Date()
+                    )
+                )
             case .worktreeDiscovered, .worktreeRemoved, .diffAvailable:
                 break
             }

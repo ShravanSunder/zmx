@@ -5,20 +5,20 @@ import Testing
 
 @Suite("RepoEnrichment")
 struct RepoEnrichmentTests {
-    @Test("unresolved carries repoId only")
-    func unresolvedCarriesRepoIdOnly() {
+    @Test("awaitingOrigin carries repoId only")
+    func awaitingOriginCarriesRepoIdOnly() {
         let repoId = UUID()
-        let enrichment = RepoEnrichment.unresolved(repoId: repoId)
+        let enrichment = RepoEnrichment.awaitingOrigin(repoId: repoId)
 
         #expect(enrichment.repoId == repoId)
         #expect(enrichment.identity == nil)
         #expect(enrichment.raw == nil)
     }
 
-    @Test("resolved exposes raw origin and derived identity")
-    func resolvedExposesRawAndIdentity() {
+    @Test("resolvedRemote exposes raw origin and derived identity")
+    func resolvedRemoteExposesRawAndIdentity() {
         let repoId = UUID()
-        let enrichment = RepoEnrichment.resolved(
+        let enrichment = RepoEnrichment.resolvedRemote(
             repoId: repoId,
             raw: RawRepoOrigin(origin: "git@github.com:acme/agent-studio.git", upstream: nil),
             identity: RepoIdentity(
@@ -37,29 +37,43 @@ struct RepoEnrichmentTests {
         #expect(enrichment.displayName == "agent-studio")
     }
 
-    @Test("resolved with nil origin represents local-only repo")
-    func resolvedWithNilOriginRepresentsLocalOnlyRepo() {
-        let enrichment = RepoEnrichment.resolved(
+    @Test("resolvedLocal has identity but no raw origin")
+    func resolvedLocalHasIdentityButNoRawOrigin() {
+        let repoId = UUID()
+        let identity = RepoIdentity(
+            groupKey: "local:agent-studio",
+            remoteSlug: nil,
+            organizationName: nil,
+            displayName: "agent-studio"
+        )
+        let enrichment = RepoEnrichment.resolvedLocal(
+            repoId: repoId,
+            identity: identity,
+            updatedAt: Date()
+        )
+
+        #expect(enrichment.repoId == repoId)
+        #expect(enrichment.raw == nil)
+        #expect(enrichment.identity == identity)
+        #expect(enrichment.origin == nil)
+        #expect(enrichment.remoteSlug == nil)
+        #expect(enrichment.groupKey == "local:agent-studio")
+    }
+
+    @Test("codable round-trip preserves awaitingOrigin, resolvedLocal, and resolvedRemote")
+    func codableRoundTrip() throws {
+        let awaitingOrigin = RepoEnrichment.awaitingOrigin(repoId: UUID())
+        let resolvedLocal = RepoEnrichment.resolvedLocal(
             repoId: UUID(),
-            raw: RawRepoOrigin(origin: nil, upstream: nil),
             identity: RepoIdentity(
                 groupKey: "local:agent-studio",
                 remoteSlug: nil,
                 organizationName: nil,
                 displayName: "agent-studio"
             ),
-            updatedAt: Date()
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
-
-        #expect(enrichment.origin == nil)
-        #expect(enrichment.remoteSlug == nil)
-        #expect(enrichment.groupKey == "local:agent-studio")
-    }
-
-    @Test("codable round-trip preserves unresolved and resolved cases")
-    func codableRoundTrip() throws {
-        let unresolved = RepoEnrichment.unresolved(repoId: UUID())
-        let resolved = RepoEnrichment.resolved(
+        let resolvedRemote = RepoEnrichment.resolvedRemote(
             repoId: UUID(),
             raw: RawRepoOrigin(origin: "https://github.com/acme/agent-studio", upstream: nil),
             identity: RepoIdentity(
@@ -74,10 +88,12 @@ struct RepoEnrichmentTests {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
 
-        let unresolvedData = try encoder.encode(unresolved)
-        let resolvedData = try encoder.encode(resolved)
+        let awaitingOriginData = try encoder.encode(awaitingOrigin)
+        let resolvedLocalData = try encoder.encode(resolvedLocal)
+        let resolvedRemoteData = try encoder.encode(resolvedRemote)
 
-        #expect(try decoder.decode(RepoEnrichment.self, from: unresolvedData) == unresolved)
-        #expect(try decoder.decode(RepoEnrichment.self, from: resolvedData) == resolved)
+        #expect(try decoder.decode(RepoEnrichment.self, from: awaitingOriginData) == awaitingOrigin)
+        #expect(try decoder.decode(RepoEnrichment.self, from: resolvedLocalData) == resolvedLocal)
+        #expect(try decoder.decode(RepoEnrichment.self, from: resolvedRemoteData) == resolvedRemote)
     }
 }

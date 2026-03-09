@@ -31,7 +31,7 @@ actor GitWorkingDirectoryProjector {
     private var lastKnownBranchByWorktree: [UUID: String] = [:]
     private var repoIdByWorktreeId: [UUID: UUID] = [:]
     private var lastKnownOriginByRepoId: [UUID: String] = [:]
-    private var emittedInitialEmptyOriginRepoIds: Set<UUID> = []
+    private var originResolutionByRepoId: [UUID: GitOriginResolution] = [:]
     private var nextPeriodicBatchSeqByWorktreeId: [UUID: UInt64] = [:]
     private var nextEnvelopeSequence: UInt64 = 0
 
@@ -108,7 +108,7 @@ actor GitWorkingDirectoryProjector {
         lastKnownBranchByWorktree.removeAll(keepingCapacity: false)
         repoIdByWorktreeId.removeAll(keepingCapacity: false)
         lastKnownOriginByRepoId.removeAll(keepingCapacity: false)
-        emittedInitialEmptyOriginRepoIds.removeAll(keepingCapacity: false)
+        originResolutionByRepoId.removeAll(keepingCapacity: false)
         nextPeriodicBatchSeqByWorktreeId.removeAll(keepingCapacity: false)
     }
 
@@ -141,7 +141,7 @@ actor GitWorkingDirectoryProjector {
                 nextPeriodicBatchSeqByWorktreeId.removeValue(forKey: worktreeId)
                 if !repoIdByWorktreeId.values.contains(repoId) {
                     lastKnownOriginByRepoId.removeValue(forKey: repoId)
-                    emittedInitialEmptyOriginRepoIds.remove(repoId)
+                    originResolutionByRepoId.removeValue(forKey: repoId)
                 }
                 if let task = worktreeTasks.removeValue(forKey: worktreeId) {
                     task.cancel()
@@ -250,39 +250,38 @@ actor GitWorkingDirectoryProjector {
 
         guard shouldCheckOrigin(for: changeset) else { return }
 
-        let currentOrigin = (statusSnapshot.origin ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let previousOrigin = lastKnownOriginByRepoId[changeset.repoId]
-        if previousOrigin == nil && currentOrigin.isEmpty {
-            // Emit exactly once so local-only repos converge in downstream caches.
-            // Keep lastKnownOrigin unset to allow origin discovery retries.
-            guard !emittedInitialEmptyOriginRepoIds.contains(changeset.repoId) else { return }
-            emittedInitialEmptyOriginRepoIds.insert(changeset.repoId)
+        let nextOriginResolution = statusSnapshot.originResolution
+        let previousOriginResolution = originResolutionByRepoId[changeset.repoId]
+
+        switch nextOriginResolution {
+        case .awaitingResolution:
+            originResolutionByRepoId[changeset.repoId] = .awaitingResolution
+            return
+        case .confirmedAbsent:
+            guard previousOriginResolution != .confirmedAbsent else { return }
+            originResolutionByRepoId[changeset.repoId] = .confirmedAbsent
+            lastKnownOriginByRepoId.removeValue(forKey: changeset.repoId)
             await emitGitWorkingDirectoryEvent(
                 worktreeId: changeset.worktreeId,
                 repoId: changeset.repoId,
-                event: .originChanged(
-                    repoId: changeset.repoId,
-                    from: "",
-                    to: ""
-                )
+                event: .originUnavailable(repoId: changeset.repoId)
             )
-            return
-        }
-
-        if previousOrigin != currentOrigin {
-            // Update actor state before awaiting bus emission so concurrent worktree
-            // computations in the same repo do not emit duplicate origin events.
-            lastKnownOriginByRepoId[changeset.repoId] = currentOrigin
-            if !currentOrigin.isEmpty {
-                emittedInitialEmptyOriginRepoIds.remove(changeset.repoId)
+        case .resolved(let currentOrigin):
+            let trimmedOrigin = currentOrigin.trimmingCharacters(in: .whitespacesAndNewlines)
+            let previousOrigin = lastKnownOriginByRepoId[changeset.repoId]
+            guard previousOrigin != trimmedOrigin else {
+                originResolutionByRepoId[changeset.repoId] = .resolved(trimmedOrigin)
+                return
             }
+            originResolutionByRepoId[changeset.repoId] = .resolved(trimmedOrigin)
+            lastKnownOriginByRepoId[changeset.repoId] = trimmedOrigin
             await emitGitWorkingDirectoryEvent(
                 worktreeId: changeset.worktreeId,
                 repoId: changeset.repoId,
                 event: .originChanged(
                     repoId: changeset.repoId,
                     from: previousOrigin ?? "",
-                    to: currentOrigin
+                    to: trimmedOrigin
                 )
             )
         }

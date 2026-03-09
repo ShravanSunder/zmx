@@ -96,14 +96,82 @@ The app has two separate event buses. They serve different purposes and carry di
 
 | Bus | Type | Purpose | Producers | Consumers |
 |-----|------|---------|-----------|-----------|
-| `PaneRuntimeEventBus` | `EventBus<RuntimeEnvelope>` | Runtime facts: filesystem changes, git status, forge data, topology | FilesystemActor, GitProjector, ForgeActor, AppDelegate (topology) | WorkspaceCacheCoordinator, ForgeActor (fan-out) |
+| `PaneRuntimeEventBus` | `EventBus<RuntimeEnvelope>` | Runtime facts: filesystem changes, git status, forge data, topology | FilesystemActor, GitProjector, ForgeActor, AppDelegate (boot topology replay) | WorkspaceCacheCoordinator, ForgeActor (fan-out) |
 | `AppEventBus` | `EventBus<AppEvent>` | User intent: menu clicks, keyboard shortcuts | Menu items, keyboard handlers | AppDelegate (imperative dispatch) |
 
 **These are not redundant.** `AppEventBus` carries user intent (`.addRepoRequested`, `.addFolderRequested`, `.signInRequested`). `PaneRuntimeEventBus` carries system facts (`.repoDiscovered`, `.snapshotChanged`, `.pullRequestCountsChanged`). A user intent on `AppEventBus` may RESULT in a fact on `PaneRuntimeEventBus`, but they are different events with different semantics.
 
-All topology events (`.repoDiscovered`) and enrichment events (`.snapshotChanged`, `.branchChanged`) flow through `PaneRuntimeEventBus`. The coordinator's bus subscription is the single intake. AppDelegate posts `.repoDiscovered` on the bus for boot replay; `FilesystemActor` posts `.repoDiscovered` on the bus when rescanning watched folders.
+All topology events (`.repoDiscovered`, `.repoRemoved`) and enrichment events (`.snapshotChanged`, `.branchChanged`) flow through `PaneRuntimeEventBus`. The coordinator's bus subscription is the single intake. AppDelegate posts `.repoDiscovered` on the bus for boot replay; `FilesystemActor` posts `.repoDiscovered` and `.repoRemoved` on the bus when diffing watched-folder refreshes.
 
 > **Files:** `Core/PaneRuntime/Events/EventChannels.swift` defines both buses.
+
+## Direct Commands Use Capability Protocols
+
+The bus is the event-plane coordination mechanism. Direct commands still exist,
+but they should use focused capability protocols rather than concrete actor or
+pipeline types.
+
+```text
+GOOD
+caller
+  |
+  v
+FocusedCapabilityProtocol
+  |
+  v
+Concrete pipeline / actor owner
+```
+
+```text
+BAD
+caller
+  |
+  v
+GenericCommandExecutor
+```
+
+```text
+BAD
+caller
+  |
+  v
+Concrete FilesystemGitPipeline
+  |
+  +-> refreshWatchedFolders
+  +-> register
+  +-> unregister
+  +-> setActivity
+  +-> start
+  +-> shutdown
+```
+
+Why:
+
+```text
+- actor isolation is about concurrency safety
+- protocol typing is about dependency boundaries
+- callers should only see the command surface they are allowed to use
+```
+
+Current example:
+
+```text
+AppDelegate
+  |
+  v
+WatchedFolderCommandHandling
+  |
+  v
+FilesystemGitPipeline
+```
+
+Composition-root rule:
+
+```text
+- composition root may own the concrete system
+- cross-feature consumers depend on focused capability protocols
+- do not add a generic command bus or generic command executor layer
+```
 
 ## The Multiplexing Rule
 
@@ -200,6 +268,7 @@ Events from boundary actors. Real work (filesystem scanning, network I/O) justif
 | `snapshotChanged` | `GitWorkingDirectoryProjector` | `WorktreeEnvelope` | 10-100ms (git status) | After filesystem batch | Yes |
 | `branchChanged` | `GitWorkingDirectoryProjector` | `WorktreeEnvelope` | 1-10ms | Rare | Yes |
 | `originChanged` | `GitWorkingDirectoryProjector` | `WorktreeEnvelope` | 1-10ms | Rare | Yes |
+| `originUnavailable` | `GitWorkingDirectoryProjector` | `WorktreeEnvelope` | 1-10ms | Rare | Yes |
 | `worktreeDiscovered` | `GitWorkingDirectoryProjector` | `WorktreeEnvelope` | 1-10ms | Rare | Yes |
 | `worktreeRemoved` | `GitWorkingDirectoryProjector` | `WorktreeEnvelope` | 1ms | Rare | Yes |
 | `securityEvent` | Security backend | `WorktreeEnvelope` | Varies | Rare | Yes |
@@ -212,10 +281,11 @@ Events from boundary actors. Real work (filesystem scanning, network I/O) justif
 
 These invariants are required for correct primary sidebar grouping and chip rendering:
 
-1. **Origin event ownership:** `GitWorkingDirectoryProjector` is the sole producer of `.originChanged`. It emits on worktree registration and `.git/config` changes.
-2. **Typed cache identity:** `WorkspaceCacheCoordinator` materializes repo cache entries as `RepoEnrichment` DU (`.unresolved` / `.resolved(raw, identity)`), not optional-field bags.
-3. **Group-key source of truth:** Sidebar primary groups use `RepoIdentity.groupKey` from resolved cache identity.
-4. **Repo-scoped forge mapping:** `ForgeEvent.pullRequestCountsChanged(repoId:countsByBranch:)` must be applied only to worktrees where `worktreeEnrichment.repoId == repoId`, then keyed by branch within that repo.
+1. **Origin event ownership:** `GitWorkingDirectoryProjector` is the sole producer of repo-origin facts. It emits `.originChanged` for resolved remotes and `.originUnavailable` for explicitly confirmed local-only repos.
+2. **Typed cache identity:** `WorkspaceCacheCoordinator` materializes repo cache entries as `RepoEnrichment` DU (`.awaitingOrigin` / `.resolvedLocal` / `.resolvedRemote`), not optional-field bags.
+3. **No empty-origin shortcut:** Empty origin strings do not resolve local-only identity. A repo remains `.awaitingOrigin` until the projector emits either `.originChanged(nonEmpty)` or `.originUnavailable`.
+4. **Group-key source of truth:** Sidebar primary groups use `RepoIdentity.groupKey` only from resolved cache identity. `.awaitingOrigin` repos stay in the loading section and never participate in grouping.
+5. **Repo-scoped forge mapping:** `ForgeEvent.pullRequestCountsChanged(repoId:countsByBranch:)` must be applied only to worktrees where `worktreeEnrichment.repoId == repoId`, then keyed by branch within that repo.
 
 ### Filesystem → Git Projector Decision Tree
 

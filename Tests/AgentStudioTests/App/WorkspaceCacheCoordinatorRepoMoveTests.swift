@@ -41,7 +41,7 @@ struct WorkspaceCacheCoordinatorRepoMoveTests {
         )
 
         repoCache.setRepoEnrichment(
-            .resolved(
+            .resolvedRemote(
                 repoId: repo.id,
                 raw: RawRepoOrigin(origin: "git@github.com:acme/repo.git", upstream: nil),
                 identity: RepoIdentity(

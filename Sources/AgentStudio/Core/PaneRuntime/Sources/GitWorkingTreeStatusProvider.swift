@@ -1,10 +1,47 @@
 import Foundation
 import os
 
+enum GitOriginResolution: Sendable, Equatable {
+    case awaitingResolution
+    case confirmedAbsent
+    case resolved(String)
+}
+
 struct GitWorkingTreeStatus: Sendable, Equatable {
     let summary: GitWorkingTreeSummary
     let branch: String?
-    let origin: String?
+    let originResolution: GitOriginResolution
+
+    init(
+        summary: GitWorkingTreeSummary,
+        branch: String?,
+        originResolution: GitOriginResolution
+    ) {
+        self.summary = summary
+        self.branch = branch
+        self.originResolution = originResolution
+    }
+
+    init(
+        summary: GitWorkingTreeSummary,
+        branch: String?,
+        origin: String?
+    ) {
+        self.init(
+            summary: summary,
+            branch: branch,
+            originResolution: origin.map(GitOriginResolution.resolved) ?? .confirmedAbsent
+        )
+    }
+
+    var origin: String? {
+        switch originResolution {
+        case .resolved(let origin):
+            origin
+        case .awaitingResolution, .confirmedAbsent:
+            nil
+        }
+    }
 }
 
 protocol GitWorkingTreeStatusProvider: Sendable {
@@ -74,8 +111,12 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
                 behindCount: branchDetails.behindCount,
                 hasUpstream: branchDetails.hasUpstream
             )
-            let origin = await parseOrigin(rootPath: rootPath, processExecutor: processExecutor)
-            return GitWorkingTreeStatus(summary: summary, branch: branch, origin: origin)
+            let originResolution = await parseOrigin(rootPath: rootPath, processExecutor: processExecutor)
+            return GitWorkingTreeStatus(
+                summary: summary,
+                branch: branch,
+                originResolution: originResolution
+            )
         } catch let processError as ProcessError {
             switch processError {
             case .timedOut(_, let seconds):
@@ -256,7 +297,7 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
     nonisolated private static func parseOrigin(
         rootPath: URL,
         processExecutor: any ProcessExecutor
-    ) async -> String? {
+    ) async -> GitOriginResolution {
         do {
             let result = try await processExecutor.execute(
                 command: "git",
@@ -292,16 +333,16 @@ struct ShellGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {
                         """
                     )
                 }
-                return nil
+                return .confirmedAbsent
             }
 
             let origin = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            return origin.isEmpty ? nil : origin
+            return origin.isEmpty ? .confirmedAbsent : .resolved(origin)
         } catch {
             Self.logger.warning(
                 "git origin lookup failed for \(rootPath.path, privacy: .public): \(String(describing: error), privacy: .public)"
             )
-            return nil
+            return .awaitingResolution
         }
     }
 }

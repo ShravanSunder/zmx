@@ -65,7 +65,7 @@ final class WorkspaceCacheCoordinatorIntegrationTests {
         #expect(posted.subscriberCount > 0)
 
         let resolved = await eventually("repo enrichment should resolve from projector origin") {
-            guard case .some(.resolved(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
+            guard case .some(.resolvedRemote(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
                 return false
             }
             return identity.groupKey == "remote:askluna/agent-studio"
@@ -101,7 +101,7 @@ final class WorkspaceCacheCoordinatorIntegrationTests {
                 GitWorkingTreeStatus(
                     summary: GitWorkingTreeSummary(changed: 0, staged: 0, untracked: 0),
                     branch: "main",
-                    origin: nil
+                    originResolution: .confirmedAbsent
                 )
             },
             coalescingWindow: .zero
@@ -128,11 +128,11 @@ final class WorkspaceCacheCoordinatorIntegrationTests {
         )
 
         let resolved = await eventually("local-only repo enrichment should resolve") {
-            guard case .some(.resolved(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
+            guard case .some(.resolvedLocal(_, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
             else {
                 return false
             }
-            return raw.origin == nil && identity.groupKey == "local:\(repo.name)"
+            return identity.groupKey == "local:\(repo.name)"
         }
         #expect(resolved)
 
@@ -166,7 +166,7 @@ final class WorkspaceCacheCoordinatorIntegrationTests {
         let worktreeId = repo.worktrees.first!.id
 
         // Seed cache with enrichment data
-        repoCache.setRepoEnrichment(.unresolved(repoId: repo.id))
+        repoCache.setRepoEnrichment(.awaitingOrigin(repoId: repo.id))
         repoCache.setWorktreeEnrichment(
             WorktreeEnrichment(worktreeId: worktreeId, repoId: repo.id, branch: "main")
         )
@@ -254,7 +254,7 @@ final class WorkspaceCacheCoordinatorIntegrationTests {
         )
 
         let enriched = await eventually("enrichment should resolve") {
-            guard case .some(.resolved(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
+            guard case .some(.resolvedRemote(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
                 return false
             }
             return identity.groupKey == "remote:askluna/agent-studio"
@@ -315,7 +315,7 @@ final class WorkspaceCacheCoordinatorIntegrationTests {
         #expect(!workspaceStore.isRepoUnavailable(repo.id))
         #expect(workspaceStore.repos.count == 1)
         #expect(workspaceStore.repos[0].id == repo.id)
-        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == .unresolved(repoId: repo.id))
+        #expect(repoCache.repoEnrichmentByRepoId[repo.id] == .awaitingOrigin(repoId: repo.id))
     }
 
     // MARK: - Watched Folder Scope Change
