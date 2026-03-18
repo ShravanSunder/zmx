@@ -28,7 +28,9 @@ struct FilesystemActorWatchedFolderTests {
         let initialSummary = await actor.refreshWatchedFolders([watchedFolder])
         let initialEvents = await drainTopologyEvents(from: initialStream, timeout: .milliseconds(50))
 
-        #expect(Set(initialSummary.repoPaths(in: watchedFolder)) == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
+        #expect(
+            Set(initialSummary.repoPaths(in: watchedFolder))
+                == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
         #expect(initialEvents.discovered == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
         #expect(initialEvents.removed.isEmpty)
 
@@ -36,7 +38,9 @@ struct FilesystemActorWatchedFolderTests {
         let repeatSummary = await actor.refreshWatchedFolders([watchedFolder])
         let repeatEvents = await drainTopologyEvents(from: repeatStream, timeout: .milliseconds(50))
 
-        #expect(Set(repeatSummary.repoPaths(in: watchedFolder)) == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
+        #expect(
+            Set(repeatSummary.repoPaths(in: watchedFolder))
+                == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
         #expect(repeatEvents.discovered.isEmpty)
         #expect(repeatEvents.removed.isEmpty)
 
@@ -54,7 +58,9 @@ struct FilesystemActorWatchedFolderTests {
         let rediscoveredSummary = await actor.refreshWatchedFolders([watchedFolder])
         let rediscoveredEvents = await drainTopologyEvents(from: rediscoveredStream, timeout: .milliseconds(50))
 
-        #expect(Set(rediscoveredSummary.repoPaths(in: watchedFolder)) == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
+        #expect(
+            Set(rediscoveredSummary.repoPaths(in: watchedFolder))
+                == Set([repoA.standardizedFileURL, repoB.standardizedFileURL]))
         #expect(rediscoveredEvents.discovered == Set([repoA.standardizedFileURL]))
         #expect(rediscoveredEvents.removed.isEmpty)
 

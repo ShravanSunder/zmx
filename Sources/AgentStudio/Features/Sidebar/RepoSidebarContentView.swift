@@ -1128,10 +1128,10 @@ extension RepoSidebarContentView {
             .joined(separator: "|")
 
         return """
-        resolved[\(resolvedGroupsFingerprint)]\
-        /loading[\(loadingFingerprint)]\
-        /noResults[\(projection.showsNoResults)]
-        """
+            resolved[\(resolvedGroupsFingerprint)]\
+            /loading[\(loadingFingerprint)]\
+            /noResults[\(projection.showsNoResults)]
+            """
     }
 
     static func projectSidebar(

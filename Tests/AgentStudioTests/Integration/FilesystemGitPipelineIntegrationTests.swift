@@ -146,9 +146,13 @@ struct FilesystemGitPipelineIntegrationTests {
             repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
-        cacheCoordinator.startConsuming()
-        await waitForSubscriber(bus: bus, minimumCount: 1)
-        defer { cacheCoordinator.stopConsuming() }
+        let coordinatorStream = await bus.subscribe()
+        let coordinatorTask = Task { @MainActor in
+            for await envelope in coordinatorStream {
+                cacheCoordinator.consume(envelope)
+            }
+        }
+        defer { coordinatorTask.cancel() }
 
         await pipeline.register(worktreeId: worktreeId, repoId: repoId, rootPath: rootPath)
 
@@ -250,9 +254,13 @@ struct FilesystemGitPipelineIntegrationTests {
             repoCache: repoCache,
             scopeSyncHandler: { _ in }
         )
-        coordinator.startConsuming()
-        await waitForSubscriber(bus: bus, minimumCount: 1)
-        defer { coordinator.stopConsuming() }
+        let coordinatorStream = await bus.subscribe()
+        let coordinatorTask = Task { @MainActor in
+            for await envelope in coordinatorStream {
+                coordinator.consume(envelope)
+            }
+        }
+        defer { coordinatorTask.cancel() }
 
         await pipeline.register(worktreeId: worktreeId, repoId: repo.id, rootPath: rootPath)
 
@@ -300,20 +308,6 @@ struct FilesystemGitPipelineIntegrationTests {
         return false
     }
 
-    private func waitForSubscriber(
-        bus: EventBus<RuntimeEnvelope>,
-        minimumCount: Int,
-        maxAttempts: Int = 100
-    ) async {
-        for _ in 0..<maxAttempts {
-            if await bus.subscriberCount >= minimumCount {
-                return
-            }
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        Issue.record("Expected bus subscriber count >= \(minimumCount)")
-    }
 }
 
 private actor MutableGitWorkingTreeStatusProvider: GitWorkingTreeStatusProvider {

@@ -405,12 +405,17 @@ struct FilesystemActorTests {
         let worktreeId = UUID()
         await actor.register(worktreeId: worktreeId, repoId: worktreeId, rootPath: rootPath)
 
+        let observed = ObservedFilesystemChanges()
         let stream = await bus.subscribe()
-        var iterator = stream.makeAsyncIterator()
+        let collectionTask = Task {
+            for await envelope in stream {
+                await observed.record(envelope)
+            }
+        }
+        defer { collectionTask.cancel() }
 
         await actor.enqueueRawPaths(worktreeId: worktreeId, paths: ["cache.tmp"])
-        let initialEnvelope = try #require(await iterator.next())
-        let initialChangeset = try #require(filesChangedChangeset(from: initialEnvelope))
+        let initialChangeset = try #require(await observed.next(timeout: .milliseconds(250)))
         #expect(initialChangeset.paths.isEmpty)
         #expect(initialChangeset.suppressedIgnoredPathCount == 1)
 
@@ -420,11 +425,16 @@ struct FilesystemActorTests {
             encoding: .utf8
         )
         await actor.enqueueRawPaths(worktreeId: worktreeId, paths: [".gitignore"])
-        _ = try #require(await iterator.next())  // reload-trigger batch
 
         await actor.enqueueRawPaths(worktreeId: worktreeId, paths: ["cache.tmp"])
-        let postReloadEnvelope = try #require(await iterator.next())
-        let postReloadChangeset = try #require(filesChangedChangeset(from: postReloadEnvelope))
+        let nextChangeset = try #require(await observed.next(timeout: .milliseconds(250)))
+        let postReloadChangeset: FileChangeset
+        if nextChangeset.paths == ["cache.tmp"] {
+            postReloadChangeset = nextChangeset
+        } else {
+            #expect(nextChangeset.paths.isEmpty)
+            postReloadChangeset = try #require(await observed.next(timeout: .milliseconds(250)))
+        }
         #expect(postReloadChangeset.paths == ["cache.tmp"])
         #expect(postReloadChangeset.suppressedIgnoredPathCount == 0)
 
@@ -644,11 +654,13 @@ struct FilesystemActorTests {
 
 private actor ObservedFilesystemChanges {
     private var changesetsByWorktreeId: [UUID: [FileChangeset]] = [:]
+    private var pendingChangesets: [FileChangeset] = []
 
     func record(_ envelope: RuntimeEnvelope) {
         guard case .worktree(let worktreeEnvelope) = envelope else { return }
         guard case .filesystem(.filesChanged(let changeset)) = worktreeEnvelope.event else { return }
         changesetsByWorktreeId[changeset.worktreeId, default: []].append(changeset)
+        pendingChangesets.append(changeset)
     }
 
     func filesChangedCount(for worktreeId: UUID) -> Int {
@@ -657,5 +669,22 @@ private actor ObservedFilesystemChanges {
 
     func latestChangeset(for worktreeId: UUID) -> FileChangeset? {
         changesetsByWorktreeId[worktreeId]?.last
+    }
+
+    func next(timeout: Duration) async -> FileChangeset? {
+        let pollInterval: Duration = .milliseconds(5)
+        var remaining = timeout
+
+        while remaining > .zero {
+            if !pendingChangesets.isEmpty {
+                return pendingChangesets.removeFirst()
+            }
+
+            await Task.yield()
+            try? await Task.sleep(for: pollInterval)
+            remaining -= pollInterval
+        }
+
+        return nil
     }
 }

@@ -34,10 +34,12 @@ struct PrimarySidebarPipelineIntegrationTests {
         await postBranchChanged(bus: bus, worktreeId: worktreeB, repoId: repoB.id, from: "seed", to: "main")
 
         let identityConverged = await eventually("repo identity should resolve for both repos") {
-            guard case .some(.resolvedRemote(_, _, let identityA, _)) = repoCache.repoEnrichmentByRepoId[repoA.id] else {
+            guard case .some(.resolvedRemote(_, _, let identityA, _)) = repoCache.repoEnrichmentByRepoId[repoA.id]
+            else {
                 return false
             }
-            guard case .some(.resolvedRemote(_, _, let identityB, _)) = repoCache.repoEnrichmentByRepoId[repoB.id] else {
+            guard case .some(.resolvedRemote(_, _, let identityB, _)) = repoCache.repoEnrichmentByRepoId[repoB.id]
+            else {
                 return false
             }
             return identityA.groupKey == "remote:askluna/agent-studio" && identityA.groupKey == identityB.groupKey
@@ -281,7 +283,8 @@ struct PrimarySidebarPipelineIntegrationTests {
         let identityConverged = await eventually("all finance repos should share one remote group key") {
             guard !financeRepoIds.isEmpty else { return false }
             for repoId in financeRepoIds {
-                guard case .some(.resolvedRemote(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repoId] else {
+                guard case .some(.resolvedRemote(_, _, let identity, _)) = repoCache.repoEnrichmentByRepoId[repoId]
+                else {
                     return false
                 }
                 guard identity.groupKey == "remote:askluna/askluna-finance" else { return false }

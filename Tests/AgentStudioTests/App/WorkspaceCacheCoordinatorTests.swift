@@ -303,7 +303,8 @@ final class WorkspaceCacheCoordinatorTests {
             )
         )
 
-        guard case .some(.resolvedRemote(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id] else {
+        guard case .some(.resolvedRemote(_, let raw, let identity, _)) = repoCache.repoEnrichmentByRepoId[repo.id]
+        else {
             Issue.record("Expected resolved enrichment")
             return
         }
