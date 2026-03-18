@@ -297,7 +297,12 @@ depends = ["build"]
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
-BUILD_PATH="${SWIFT_BUILD_DIR:-.build}"
+RUN_ID="${AGENT_RUN_ID:-}"
+if [ -z "$RUN_ID" ]; then
+  echo "[test-benchmark] ERROR: AGENT_RUN_ID is required (example: AGENT_RUN_ID=abc123 mise run test-benchmark)"
+  exit 2
+fi
+BUILD_PATH="${SWIFT_BUILD_DIR:-.build-agent-$RUN_ID}"
 export AGENT_STUDIO_BENCHMARK_MODE=benchmark
 
 swift test --build-path "$BUILD_PATH" --filter "PushBenchmarkSupportTests"
