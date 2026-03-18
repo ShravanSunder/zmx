@@ -31,7 +31,6 @@ struct RepoSidebarContentViewTests {
 
         let entries = RepoSidebarContentView.buildListEntries(
             groups: [group],
-            loadingRepos: [],
             expandedGroupIds: [group.id],
             isFiltering: false
         )
@@ -70,7 +69,6 @@ struct RepoSidebarContentViewTests {
 
         let entries = RepoSidebarContentView.buildListEntries(
             groups: [group],
-            loadingRepos: [],
             expandedGroupIds: [],
             isFiltering: false
         )
@@ -83,16 +81,9 @@ struct RepoSidebarContentViewTests {
         #expect(headerGroup.id == group.id)
     }
 
-    @Test("flat list entries append loading header and loading rows after resolved groups")
-    func flatListEntriesAppendLoadingHeaderAndRowsAfterResolvedGroups() {
+    @Test("flat list entries only include resolved headers and worktree rows")
+    func flatListEntriesOnlyIncludeResolvedHeadersAndWorktreeRows() {
         let resolvedRepoId = UUID()
-        let loadingRepo = SidebarRepo(
-            id: UUID(),
-            name: "loading-repo",
-            repoPath: URL(fileURLWithPath: "/tmp/loading-repo"),
-            stableKey: "loading-repo",
-            worktrees: [Worktree(repoId: UUID(), name: "main", path: URL(fileURLWithPath: "/tmp/loading-repo"))]
-        )
         let resolvedGroup = SidebarRepoGroup(
             id: "remote:askluna/agent-studio",
             repoTitle: "agent-studio",
@@ -116,22 +107,15 @@ struct RepoSidebarContentViewTests {
 
         let entries = RepoSidebarContentView.buildListEntries(
             groups: [resolvedGroup],
-            loadingRepos: [loadingRepo],
             expandedGroupIds: [],
             isFiltering: false
         )
 
-        #expect(entries.count == 3)
-        guard
-            case .resolvedGroupHeader = entries[0],
-            case .loadingHeader = entries[1],
-            case .loadingRepoRow(let loadingRepoId) = entries[2]
-        else {
-            Issue.record("Expected flat resolved header, loading header, and loading row")
+        #expect(entries.count == 1)
+        guard case .resolvedGroupHeader = entries[0] else {
+            Issue.record("Expected only the resolved header entry")
             return
         }
-
-        #expect(loadingRepoId == loadingRepo.id)
     }
 
     @Test("sidebar projection separates resolved groups from loading repos")

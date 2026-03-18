@@ -64,10 +64,9 @@ struct RepoSidebarContentView: View {
         sidebarProjection.loadingRepos
     }
 
-    private var listEntries: [SidebarListEntry] {
+    private var resolvedListEntries: [SidebarListEntry] {
         Self.buildListEntries(
             groups: groups,
-            loadingRepos: loadingReposList,
             expandedGroupIds: expandedGroups,
             isFiltering: isFiltering
         )
@@ -223,7 +222,7 @@ struct RepoSidebarContentView: View {
 
     private var groupList: some View {
         List {
-            ForEach(listEntries) { entry in
+            ForEach(resolvedListEntries) { entry in
                 switch entry {
                 case .resolvedGroupHeader(let group):
                     Button {
@@ -328,31 +327,28 @@ struct RepoSidebarContentView: View {
                             )
                         )
                     }
+                }
+            }
 
-                case .loadingHeader:
-                    SidebarLoadingSectionHeaderRow()
-                        .listRowInsets(
-                            EdgeInsets(
-                                top: 4,
-                                leading: AppStyle.sidebarListRowLeadingInset,
-                                bottom: 2,
-                                trailing: 0
-                            )
-                        )
-
-                case .loadingRepoRow(let repoId):
-                    if let loadingRepo = loadingReposList.first(where: { $0.id == repoId }) {
-                        SidebarLoadingRepoRow(repoName: loadingRepo.name)
+            if !loadingReposList.isEmpty {
+                Section {
+                    ForEach(loadingReposList, id: \.id) { repo in
+                        SidebarLoadingRepoRow(repoName: repo.name)
                             .listRowInsets(
                                 EdgeInsets(
                                     top: 0,
                                     leading: AppStyle.sidebarGroupChildRowLeadingInset,
                                     bottom: 0,
-                                    trailing: 0
+                                    trailing: 8
                                 )
                             )
-                            .disabled(true)
+                            .listRowBackground(Color.clear)
+                            .allowsHitTesting(false)
                     }
+                } header: {
+                    SidebarLoadingSectionHeaderRow()
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
                 }
             }
         }
@@ -466,8 +462,6 @@ struct RepoSidebarContentView: View {
 enum SidebarListEntry: Identifiable {
     case resolvedGroupHeader(SidebarRepoGroup)
     case resolvedWorktreeRow(groupId: String, repoId: UUID, worktreeId: UUID)
-    case loadingHeader
-    case loadingRepoRow(UUID)
 
     var id: String {
         switch self {
@@ -475,10 +469,6 @@ enum SidebarListEntry: Identifiable {
             return "group:\(group.id)"
         case .resolvedWorktreeRow(let groupId, let repoId, let worktreeId):
             return "worktree:\(groupId):\(repoId.uuidString):\(worktreeId.uuidString)"
-        case .loadingHeader:
-            return "loading-header"
-        case .loadingRepoRow(let repoId):
-            return "loading:\(repoId.uuidString)"
         }
     }
 }
@@ -762,6 +752,12 @@ private struct SidebarLoadingSectionHeaderRow: View {
                     .foregroundStyle(.secondary)
             }
             .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, AppStyle.spacingStandard)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(Color.primary.opacity(0.06))
+            )
 
             Rectangle()
                 .fill(Color.primary.opacity(0.12))
@@ -1093,7 +1089,6 @@ struct GitBranchStatus: Equatable, Sendable {
 extension RepoSidebarContentView {
     static func buildListEntries(
         groups: [SidebarRepoGroup],
-        loadingRepos: [SidebarRepo],
         expandedGroupIds: Set<String>,
         isFiltering: Bool
     ) -> [SidebarListEntry] {
@@ -1116,11 +1111,6 @@ extension RepoSidebarContentView {
                     )
                 }
             }
-        }
-
-        if !loadingRepos.isEmpty {
-            entries.append(.loadingHeader)
-            entries.append(contentsOf: loadingRepos.map { .loadingRepoRow($0.id) })
         }
 
         return entries

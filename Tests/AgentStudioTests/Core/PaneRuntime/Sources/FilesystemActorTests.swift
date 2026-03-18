@@ -3,7 +3,7 @@ import Testing
 
 @testable import AgentStudio
 
-@Suite("FilesystemActor")
+@Suite(.serialized)
 struct FilesystemActorTests {
     @Test("register emits worktreeRegistered fact")
     func registerEmitsWorktreeRegisteredFact() async throws {

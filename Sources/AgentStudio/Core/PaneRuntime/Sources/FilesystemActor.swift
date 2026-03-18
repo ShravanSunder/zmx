@@ -23,7 +23,6 @@ actor FilesystemActor {
         var containsGitInternalChanges = false
         var suppressedIgnoredPathCount = 0
         var suppressedGitInternalPathCount = 0
-        var requiresPathFilterReload = false
         var firstPendingTimestamp: ContinuousClock.Instant?
         var lastPendingTimestamp: ContinuousClock.Instant?
 
@@ -203,15 +202,20 @@ actor FilesystemActor {
                 continue
             }
 
-            guard let root = roots[ownedPath.worktreeId] else { continue }
+            guard var root = roots[ownedPath.worktreeId] else { continue }
 
             var pendingChanges = pendingChangesByWorktreeId[ownedPath.worktreeId] ?? PendingWorktreeChanges()
+            if ownedPath.relativePath == ".gitignore" {
+                root.pathFilter = FilesystemPathFilter.load(forRootPath: root.rootPath)
+                roots[ownedPath.worktreeId] = root
+                pendingChanges.recordPendingChange(at: envelopeClock.now)
+                pendingChangesByWorktreeId[ownedPath.worktreeId] = pendingChanges
+                continue
+            }
+
             switch root.pathFilter.classify(relativePath: ownedPath.relativePath) {
             case .projected:
                 pendingChanges.projectedPaths.insert(ownedPath.relativePath)
-                if ownedPath.relativePath == ".gitignore" {
-                    pendingChanges.requiresPathFilterReload = true
-                }
             case .gitInternal:
                 pendingChanges.containsGitInternalChanges = true
                 pendingChanges.suppressedGitInternalPathCount += 1
@@ -377,9 +381,6 @@ actor FilesystemActor {
             return
         }
 
-        if pendingChanges.requiresPathFilterReload {
-            root.pathFilter = FilesystemPathFilter.load(forRootPath: root.rootPath)
-        }
         pendingChangesByWorktreeId[worktreeId] = PendingWorktreeChanges()
 
         let orderedPaths = pendingChanges.projectedPaths.sorted()
