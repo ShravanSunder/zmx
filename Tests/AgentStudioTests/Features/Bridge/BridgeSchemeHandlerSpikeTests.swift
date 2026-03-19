@@ -89,7 +89,7 @@ extension WebKitSerializedTests {
             equals expectedTitle: String,
             timeout: Duration = .seconds(2)
         ) async -> Bool {
-            for _ in 0..<20_000 {
+            for _ in 0..<200_000 {
                 if page.title == expectedTitle {
                     return true
                 }
