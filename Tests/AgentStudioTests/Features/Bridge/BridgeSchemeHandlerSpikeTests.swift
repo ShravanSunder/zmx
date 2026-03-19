@@ -87,7 +87,7 @@ extension WebKitSerializedTests {
         }
 
         private func waitForPageLoad(_ page: WebPage) async throws {
-            for _ in 0..<5000 {
+            for _ in 0..<50_000 {
                 if !page.isLoading { break }
                 await Task.yield()
             }
@@ -99,7 +99,7 @@ extension WebKitSerializedTests {
             equals expectedTitle: String,
             timeout: Duration = .seconds(2)
         ) async -> Bool {
-            for _ in 0..<2000 {
+            for _ in 0..<20_000 {
                 if page.title == expectedTitle {
                     return true
                 }

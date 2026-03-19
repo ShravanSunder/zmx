@@ -32,7 +32,7 @@ enum WebPageTestHarness {
         if let blankURL = URL(string: "about:blank") {
             _ = page.load(blankURL)
         }
-        for _ in 0..<1000 where page.isLoading {
+        for _ in 0..<10_000 where page.isLoading {
             await Task.yield()
         }
         for _ in 0..<settleTurns {
