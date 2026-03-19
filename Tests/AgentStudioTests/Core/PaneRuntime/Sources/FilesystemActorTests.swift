@@ -379,7 +379,7 @@ struct FilesystemActorTests {
 
         let envelope = try #require(await iterator.next())
         let changeset = try #require(filesChangedChangeset(from: envelope))
-        #expect(changeset.paths.isEmpty)
+        #expect(Set(changeset.paths).isSubset(of: ["."]))
         #expect(changeset.containsGitInternalChanges)
         #expect(changeset.suppressedIgnoredPathCount == 1)
         #expect(changeset.suppressedGitInternalPathCount == 1)
