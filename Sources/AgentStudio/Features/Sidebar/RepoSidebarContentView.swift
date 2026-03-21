@@ -435,7 +435,7 @@ struct RepoSidebarContentView: View {
     }
 
     private func branchName(for worktree: Worktree) -> String {
-        Self.resolvedBranchName(
+        PaneDisplayProjector.resolvedBranchName(
             worktree: worktree,
             enrichment: repoCache.worktreeEnrichmentByWorktreeId[worktree.id]
         )
@@ -1288,19 +1288,6 @@ extension RepoSidebarContentView {
 
         return metadataByRepoId
     }
-
-    static func resolvedBranchName(
-        worktree: Worktree,
-        enrichment: WorktreeEnrichment?
-    ) -> String {
-        let cachedBranch = enrichment?.branch.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !cachedBranch.isEmpty {
-            return cachedBranch
-        }
-
-        return "detached HEAD"
-    }
-
     static func mergeBranchStatuses(
         worktreeEnrichmentsByWorktreeId: [UUID: WorktreeEnrichment],
         pullRequestCountsByWorktreeId: [UUID: Int]
@@ -1385,6 +1372,7 @@ extension RepoSidebarContentView {
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
+
 }
 
 enum SidebarRepoGrouping {

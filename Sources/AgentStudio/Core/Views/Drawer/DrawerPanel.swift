@@ -53,6 +53,7 @@ struct DrawerPanel: View {
     let splitRenderInfo: SplitRenderInfo
     let height: CGFloat
     let store: WorkspaceStore
+    let repoCache: WorkspaceRepoCache
     let action: (PaneAction) -> Void
     let onResize: (CGFloat) -> Void
     let onDismiss: () -> Void
@@ -129,6 +130,7 @@ struct DrawerPanel: View {
                             action: drawerAction,
                             onPersist: nil,
                             store: store,
+                            repoCache: repoCache,
                             dropTargetCoordinateSpace: Self.drawerDropCoordinateSpace,
                             useDrawerFramePreference: true
                         )
@@ -141,7 +143,11 @@ struct DrawerPanel: View {
                                 CollapsedPaneBar(
                                     paneId: paneId,
                                     tabId: tabId,
-                                    title: store.pane(paneId)?.title ?? "Terminal",
+                                    title: PaneDisplayProjector.displayLabel(
+                                        for: paneId,
+                                        store: store,
+                                        repoCache: repoCache
+                                    ),
                                     action: drawerAction
                                 )
                                 .frame(width: CollapsedPaneBar.barWidth)
@@ -309,6 +315,7 @@ struct DrawerPanel: View {
                     height: 200,
                     store: WorkspaceStore(
                         persistor: WorkspacePersistor(workspacesDir: FileManager.default.temporaryDirectory)),
+                    repoCache: WorkspaceRepoCache(),
                     action: { _ in },
                     onResize: { _ in },
                     onDismiss: {}

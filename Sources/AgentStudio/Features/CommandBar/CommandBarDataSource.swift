@@ -41,15 +41,16 @@ enum CommandBarDataSource {
     static func items(
         scope: CommandBarScope,
         store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache = WorkspaceRepoCache(),
         dispatcher: CommandDispatcher
     ) -> [CommandBarItem] {
         switch scope {
         case .everything:
-            return everythingItems(store: store, dispatcher: dispatcher)
+            return everythingItems(store: store, repoCache: repoCache, dispatcher: dispatcher)
         case .commands:
-            return commandItems(dispatcher: dispatcher, store: store)
+            return commandItems(dispatcher: dispatcher, store: store, repoCache: repoCache)
         case .panes:
-            return paneAndTabItems(store: store)
+            return paneAndTabItems(store: store, repoCache: repoCache)
         case .repos:
             return repoScopeItems(store: store)
         }
@@ -76,27 +77,31 @@ enum CommandBarDataSource {
 
     private static func everythingItems(
         store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache,
         dispatcher: CommandDispatcher
     ) -> [CommandBarItem] {
         var items: [CommandBarItem] = []
-        items.append(contentsOf: tabItems(store: store))
-        items.append(contentsOf: paneItems(store: store))
+        items.append(contentsOf: tabItems(store: store, repoCache: repoCache))
+        items.append(contentsOf: paneItems(store: store, repoCache: repoCache))
         items.append(
             contentsOf: allCommandItems(
-                dispatcher: dispatcher, store: store, groupName: Group.commands, priority: Priority.commands))
+                dispatcher: dispatcher,
+                store: store,
+                repoCache: repoCache,
+                groupName: Group.commands,
+                priority: Priority.commands))
         items.append(contentsOf: worktreeItems(store: store))
         return items
     }
 
     // MARK: - Tab Items
 
-    private static func tabItems(store: WorkspaceStore) -> [CommandBarItem] {
+    private static func tabItems(
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
+    ) -> [CommandBarItem] {
         store.tabs.enumerated().map { index, tab in
-            let paneTitles = tab.paneIds.compactMap { store.pane($0)?.title }
-            let title =
-                paneTitles.count > 1
-                ? paneTitles.joined(separator: " | ")
-                : paneTitles.first ?? "Terminal"
+            let title = tabDisplayTitle(tab: tab, store: store, repoCache: repoCache)
             let isActive = tab.id == store.activeTabId
 
             let tabId = tab.id
@@ -117,7 +122,10 @@ enum CommandBarDataSource {
 
     // MARK: - Pane Items
 
-    private static func paneItems(store: WorkspaceStore) -> [CommandBarItem] {
+    private static func paneItems(
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
+    ) -> [CommandBarItem] {
         var items: [CommandBarItem] = []
         for (tabIndex, tab) in store.tabs.enumerated() {
             for paneId in tab.paneIds {
@@ -129,13 +137,13 @@ enum CommandBarDataSource {
                 items.append(
                     CommandBarItem(
                         id: "pane-\(pane.id.uuidString)",
-                        title: pane.title,
+                        title: PaneDisplayProjector.displayLabel(for: pane.id, store: store, repoCache: repoCache),
                         subtitle: "Tab \(tabIndex + 1)" + (isActive ? " · Active" : ""),
                         icon: iconForPane(pane),
                         iconColor: nil,
                         group: Group.panes,
                         groupPriority: Priority.panes,
-                        keywords: keywordsForPane(pane, store: store),
+                        keywords: keywordsForPane(pane, store: store, repoCache: repoCache),
                         action: .custom {
                             // Select the parent tab and focus the specific pane
                             postAppEvent(.selectTabById(tabId: parentTabId, paneId: capturedPaneId))
@@ -148,14 +156,13 @@ enum CommandBarDataSource {
 
     // MARK: - Panes Scope (grouped by tab)
 
-    private static func paneAndTabItems(store: WorkspaceStore) -> [CommandBarItem] {
+    private static func paneAndTabItems(
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
+    ) -> [CommandBarItem] {
         var items: [CommandBarItem] = []
         for (tabIndex, tab) in store.tabs.enumerated() {
-            let paneTitles = tab.paneIds.compactMap { store.pane($0)?.title }
-            let tabTitle =
-                paneTitles.count > 1
-                ? paneTitles.joined(separator: " | ")
-                : paneTitles.first ?? "Terminal"
+            let tabTitle = tabDisplayTitle(tab: tab, store: store, repoCache: repoCache)
             let tabGroupName = "Tab \(tabIndex + 1): \(tabTitle)"
             let isActiveTab = tab.id == store.activeTabId
 
@@ -185,13 +192,13 @@ enum CommandBarDataSource {
                 items.append(
                     CommandBarItem(
                         id: "pane-\(pane.id.uuidString)",
-                        title: pane.title,
+                        title: PaneDisplayProjector.displayLabel(for: pane.id, store: store, repoCache: repoCache),
                         subtitle: isActive ? "Active Pane" : nil,
                         icon: iconForPane(pane),
                         iconColor: nil,
                         group: tabGroupName,
                         groupPriority: tabIndex,
-                        keywords: keywordsForPane(pane, store: store),
+                        keywords: keywordsForPane(pane, store: store, repoCache: repoCache),
                         action: .custom {
                             postAppEvent(.selectTabById(tabId: capturedTabId, paneId: capturedPaneId))
                         }
@@ -209,12 +216,22 @@ enum CommandBarDataSource {
     }
 
     /// Commands grouped by category (for `.commands` scope).
-    private static func commandItems(dispatcher: CommandDispatcher, store: WorkspaceStore) -> [CommandBarItem] {
+    private static func commandItems(
+        dispatcher: CommandDispatcher,
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
+    ) -> [CommandBarItem] {
         visibleCommands(dispatcher: dispatcher)
             .sorted { $0.command.rawValue < $1.command.rawValue }
             .map { def in
                 let (groupName, groupPriority) = commandGroup(for: def.command)
-                return commandItem(from: def, groupName: groupName, groupPriority: groupPriority, store: store)
+                return commandItem(
+                    from: def,
+                    groupName: groupName,
+                    groupPriority: groupPriority,
+                    store: store,
+                    repoCache: repoCache
+                )
             }
     }
 
@@ -222,22 +239,32 @@ enum CommandBarDataSource {
     private static func allCommandItems(
         dispatcher: CommandDispatcher,
         store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache,
         groupName: String,
         priority: Int
     ) -> [CommandBarItem] {
         visibleCommands(dispatcher: dispatcher)
             .sorted { $0.label < $1.label }
-            .map { commandItem(from: $0, groupName: groupName, groupPriority: priority, store: store) }
+            .map {
+                commandItem(
+                    from: $0,
+                    groupName: groupName,
+                    groupPriority: priority,
+                    store: store,
+                    repoCache: repoCache
+                )
+            }
     }
 
     private static func commandItem(
         from def: CommandDefinition,
         groupName: String,
         groupPriority: Int,
-        store: WorkspaceStore? = nil
+        store: WorkspaceStore? = nil,
+        repoCache: WorkspaceRepoCache = WorkspaceRepoCache()
     ) -> CommandBarItem {
         if def.command == .movePaneToTab, let store {
-            let level = buildMovePaneSourceLevel(for: def, store: store)
+            let level = buildMovePaneSourceLevel(for: def, store: store, repoCache: repoCache)
             return CommandBarItem(
                 id: "cmd-\(def.command.rawValue)",
                 title: def.label,
@@ -256,7 +283,7 @@ enum CommandBarDataSource {
         let hasDrillIn = store != nil && !def.appliesTo.isEmpty && isTargetableCommand(def.command)
 
         if hasDrillIn, let store {
-            let level = buildTargetLevel(for: def, store: store)
+            let level = buildTargetLevel(for: def, store: store, repoCache: repoCache)
             return CommandBarItem(
                 id: "cmd-\(def.command.rawValue)",
                 title: def.label,
@@ -301,10 +328,11 @@ enum CommandBarDataSource {
     /// Build a CommandBarLevel listing available targets for a command.
     private static func buildTargetLevel(
         for def: CommandDefinition,
-        store: WorkspaceStore
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
     ) -> CommandBarLevel {
         if def.command == .movePaneToTab {
-            return buildMovePaneSourceLevel(for: def, store: store)
+            return buildMovePaneSourceLevel(for: def, store: store, repoCache: repoCache)
         }
 
         // Arrangement commands show arrangement targets, not generic tab/pane targets
@@ -314,7 +342,7 @@ enum CommandBarDataSource {
 
         // Drawer pane navigation shows drawer pane targets
         if def.command == .navigateDrawerPane {
-            return buildDrawerPaneTargetLevel(for: def, store: store)
+            return buildDrawerPaneTargetLevel(for: def, store: store, repoCache: repoCache)
         }
 
         var items: [CommandBarItem] = []
@@ -326,11 +354,7 @@ enum CommandBarDataSource {
         if appliesToTab {
             items.append(
                 contentsOf: store.tabs.enumerated().map { index, tab in
-                    let paneTitles = tab.paneIds.compactMap { store.pane($0)?.title }
-                    let title =
-                        paneTitles.count > 1
-                        ? paneTitles.joined(separator: " | ")
-                        : paneTitles.first ?? "Terminal"
+                    let title = tabDisplayTitle(tab: tab, store: store, repoCache: repoCache)
                     return CommandBarItem(
                         id: "target-tab-\(tab.id.uuidString)",
                         title: title,
@@ -355,7 +379,7 @@ enum CommandBarDataSource {
                     items.append(
                         CommandBarItem(
                             id: "target-pane-\(pane.id.uuidString)",
-                            title: pane.title,
+                            title: PaneDisplayProjector.displayLabel(for: pane.id, store: store, repoCache: repoCache),
                             subtitle: "Tab \(tabIndex + 1)",
                             icon: iconForPane(pane),
                             iconColor: nil,
@@ -396,7 +420,8 @@ enum CommandBarDataSource {
     /// source pane selection -> destination tab selection.
     private static func buildMovePaneSourceLevel(
         for def: CommandDefinition,
-        store: WorkspaceStore
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
     ) -> CommandBarLevel {
         let items: [CommandBarItem] = store.tabs.enumerated().flatMap { tabIndex, tab in
             tab.paneIds.compactMap { paneId in
@@ -404,12 +429,13 @@ enum CommandBarDataSource {
                 let destinationLevel = buildMovePaneDestinationLevel(
                     for: def,
                     store: store,
+                    repoCache: repoCache,
                     sourcePaneId: pane.id,
                     sourceTabId: tab.id
                 )
                 return CommandBarItem(
                     id: "target-move-source-pane-\(pane.id.uuidString)",
-                    title: pane.title,
+                    title: PaneDisplayProjector.displayLabel(for: pane.id, store: store, repoCache: repoCache),
                     subtitle: "Tab \(tabIndex + 1)",
                     icon: iconForPane(pane),
                     iconColor: nil,
@@ -432,6 +458,7 @@ enum CommandBarDataSource {
     private static func buildMovePaneDestinationLevel(
         for def: CommandDefinition,
         store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache,
         sourcePaneId: UUID,
         sourceTabId: UUID
     ) -> CommandBarLevel {
@@ -440,7 +467,7 @@ enum CommandBarDataSource {
             guard tab.activePaneId ?? tab.paneIds.first != nil else { return nil }
 
             let targetTabId = tab.id
-            let tabTitle = tabDisplayTitle(tab: tab, store: store)
+            let tabTitle = tabDisplayTitle(tab: tab, store: store, repoCache: repoCache)
             return CommandBarItem(
                 id: "target-move-dest-tab-\(sourcePaneId.uuidString)-\(targetTabId.uuidString)",
                 title: tabTitle,
@@ -503,7 +530,8 @@ enum CommandBarDataSource {
     /// Build a target level listing drawer panes for the active pane.
     private static func buildDrawerPaneTargetLevel(
         for def: CommandDefinition,
-        store: WorkspaceStore
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
     ) -> CommandBarLevel {
         var items: [CommandBarItem] = []
 
@@ -518,7 +546,11 @@ enum CommandBarDataSource {
                 let isActive = drawer.activePaneId == drawerPaneId
                 return CommandBarItem(
                     id: "target-drawer-\(drawerPaneId.uuidString)",
-                    title: drawerPane.metadata.title,
+                    title: PaneDisplayProjector.displayLabel(
+                        for: drawerPane.id,
+                        store: store,
+                        repoCache: repoCache
+                    ),
                     subtitle: isActive ? "Active" : "Drawer \(index + 1)",
                     icon: "terminal",
                     group: "Drawer Panes",
@@ -595,8 +627,12 @@ enum CommandBarDataSource {
         }
     }
 
-    private static func keywordsForPane(_ pane: Pane, store: WorkspaceStore) -> [String] {
-        var keywords = ["pane", pane.title]
+    private static func keywordsForPane(
+        _ pane: Pane,
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
+    ) -> [String] {
+        var keywords = ["pane"] + PaneDisplayProjector.paneKeywords(for: pane, store: store, repoCache: repoCache)
         if case .webview = pane.content {
             keywords.append(contentsOf: ["web", "browser", "url"])
         } else if case .bridgePanel = pane.content {
@@ -610,12 +646,12 @@ enum CommandBarDataSource {
         return keywords
     }
 
-    private static func tabDisplayTitle(tab: Tab, store: WorkspaceStore) -> String {
-        let paneTitles = tab.paneIds.compactMap { store.pane($0)?.title }
-        if paneTitles.count > 1 {
-            return paneTitles.joined(separator: " | ")
-        }
-        return paneTitles.first ?? "Terminal"
+    private static func tabDisplayTitle(
+        tab: Tab,
+        store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache
+    ) -> String {
+        PaneDisplayProjector.tabDisplayLabel(for: tab, store: store, repoCache: repoCache)
     }
 
     private static func isHiddenCommand(_ command: AppCommand) -> Bool {

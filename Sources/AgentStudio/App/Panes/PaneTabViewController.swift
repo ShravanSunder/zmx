@@ -16,6 +16,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
     // MARK: - Dependencies (injected)
 
     private let store: WorkspaceStore
+    private let repoCache: WorkspaceRepoCache
     private let executor: ActionExecutor
     private let tabBarAdapter: TabBarAdapter
     private let viewRegistry: ViewRegistry
@@ -40,10 +41,12 @@ class PaneTabViewController: NSViewController, CommandHandler {
     // MARK: - Init
 
     init(
-        store: WorkspaceStore, executor: ActionExecutor,
+        store: WorkspaceStore, repoCache: WorkspaceRepoCache = WorkspaceRepoCache(),
+        executor: ActionExecutor,
         tabBarAdapter: TabBarAdapter, viewRegistry: ViewRegistry
     ) {
         self.store = store
+        self.repoCache = repoCache
         self.executor = executor
         self.tabBarAdapter = tabBarAdapter
         self.viewRegistry = viewRegistry
@@ -311,6 +314,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
     private func setupSplitContentView() {
         let contentView = ActiveTabContent(
             store: store,
+            repoCache: repoCache,
             viewRegistry: viewRegistry,
             action: { [weak self] action in self?.dispatchAction(action) },
             shouldAcceptDrop: { [weak self] payload, destPaneId, zone in

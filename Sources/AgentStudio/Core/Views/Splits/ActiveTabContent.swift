@@ -10,6 +10,7 @@ import SwiftUI
 /// See docs/architecture/appkit_swiftui_architecture.md for the hosting pattern.
 struct ActiveTabContent: View {
     let store: WorkspaceStore
+    let repoCache: WorkspaceRepoCache
     let viewRegistry: ViewRegistry
     let action: (PaneAction) -> Void
     let shouldAcceptDrop: (SplitDropPayload, UUID, DropZone) -> Bool
@@ -40,6 +41,7 @@ struct ActiveTabContent: View {
                 shouldAcceptDrop: shouldAcceptDrop,
                 onDrop: onDrop,
                 store: store,
+                repoCache: repoCache,
                 viewRegistry: viewRegistry
             )
         }

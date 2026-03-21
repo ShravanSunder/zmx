@@ -29,6 +29,7 @@ struct TerminalSplitContainer: View {
     let shouldAcceptDrop: (SplitDropPayload, UUID, DropZone) -> Bool
     let onDrop: (SplitDropPayload, UUID, DropZone) -> Void
     let store: WorkspaceStore
+    let repoCache: WorkspaceRepoCache
     let viewRegistry: ViewRegistry
 
     @State private var paneFrames: [UUID: CGRect] = [:]
@@ -46,7 +47,7 @@ struct TerminalSplitContainer: View {
                 CollapsedPaneBar(
                     paneId: paneId,
                     tabId: tabId,
-                    title: store.pane(paneId)?.title ?? "Terminal",
+                    title: PaneDisplayProjector.displayLabel(for: paneId, store: store, repoCache: repoCache),
                     action: action,
                     dropTargetCoordinateSpace: "tabContainer"
                 )
@@ -72,6 +73,7 @@ struct TerminalSplitContainer: View {
                                 isActive: true,
                                 isSplit: false,
                                 store: store,
+                                repoCache: repoCache,
                                 action: action
                             )
                             // Zoom indicator badge
@@ -98,7 +100,8 @@ struct TerminalSplitContainer: View {
                             splitRenderInfo: splitRenderInfo,
                             action: action,
                             onPersist: onPersist,
-                            store: store
+                            store: store,
+                            repoCache: repoCache
                         )
                         .id(node.structuralIdentity)  // Prevents view recreation on ratio changes
                     }
@@ -114,6 +117,7 @@ struct TerminalSplitContainer: View {
                 // Tab-level drawer panel overlay (renders on top of all panes)
                 DrawerPanelOverlay(
                     store: store,
+                    repoCache: repoCache,
                     viewRegistry: viewRegistry,
                     tabId: tabId,
                     paneFrames: paneFrames,
@@ -200,6 +204,7 @@ struct SplitSubtreeView: View {
     let action: (PaneAction) -> Void
     let onPersist: (() -> Void)?
     let store: WorkspaceStore
+    let repoCache: WorkspaceRepoCache
     let dropTargetCoordinateSpace: String?
     let useDrawerFramePreference: Bool
 
@@ -213,6 +218,7 @@ struct SplitSubtreeView: View {
         action: @escaping (PaneAction) -> Void,
         onPersist: (() -> Void)?,
         store: WorkspaceStore,
+        repoCache: WorkspaceRepoCache,
         dropTargetCoordinateSpace: String? = "tabContainer",
         useDrawerFramePreference: Bool = false
     ) {
@@ -225,6 +231,7 @@ struct SplitSubtreeView: View {
         self.action = action
         self.onPersist = onPersist
         self.store = store
+        self.repoCache = repoCache
         self.dropTargetCoordinateSpace = dropTargetCoordinateSpace
         self.useDrawerFramePreference = useDrawerFramePreference
     }
@@ -236,7 +243,7 @@ struct SplitSubtreeView: View {
                 CollapsedPaneBar(
                     paneId: paneView.id,
                     tabId: tabId,
-                    title: store.pane(paneView.id)?.title ?? "Terminal",
+                    title: PaneDisplayProjector.displayLabel(for: paneView.id, store: store, repoCache: repoCache),
                     action: action,
                     dropTargetCoordinateSpace: dropTargetCoordinateSpace,
                     useDrawerFramePreference: useDrawerFramePreference
@@ -248,6 +255,7 @@ struct SplitSubtreeView: View {
                     isActive: paneView.id == activePaneId,
                     isSplit: isSplit,
                     store: store,
+                    repoCache: repoCache,
                     action: action,
                     dropTargetCoordinateSpace: dropTargetCoordinateSpace,
                     useDrawerFramePreference: useDrawerFramePreference
@@ -345,7 +353,7 @@ struct SplitSubtreeView: View {
             CollapsedPaneBar(
                 paneId: paneId,
                 tabId: tabId,
-                title: store.pane(paneId)?.title ?? "Terminal",
+                title: PaneDisplayProjector.displayLabel(for: paneId, store: store, repoCache: repoCache),
                 action: action,
                 dropTargetCoordinateSpace: dropTargetCoordinateSpace,
                 useDrawerFramePreference: useDrawerFramePreference
@@ -378,6 +386,7 @@ struct SplitSubtreeView: View {
             action: action,
             onPersist: onPersist,
             store: store,
+            repoCache: repoCache,
             dropTargetCoordinateSpace: dropTargetCoordinateSpace,
             useDrawerFramePreference: useDrawerFramePreference
         )

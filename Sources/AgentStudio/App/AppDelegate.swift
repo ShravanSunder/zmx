@@ -196,8 +196,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         executor = ActionExecutor(coordinator: paneCoordinator, store: store)
-        tabBarAdapter = TabBarAdapter(store: store)
-        commandBarController = CommandBarPanelController(store: store, dispatcher: .shared)
+        tabBarAdapter = TabBarAdapter(store: store, repoCache: workspaceRepoCache)
+        commandBarController = CommandBarPanelController(
+            store: store,
+            repoCache: workspaceRepoCache,
+            dispatcher: .shared
+        )
         oauthService = OAuthService()
     }
 

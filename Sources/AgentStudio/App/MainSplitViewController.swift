@@ -70,6 +70,7 @@ class MainSplitViewController: NSSplitViewController {
         // Create pane tab area (pure AppKit)
         let paneTabVC = PaneTabViewController(
             store: store,
+            repoCache: repoCache,
             executor: actionExecutor,
             tabBarAdapter: tabBarAdapter,
             viewRegistry: viewRegistry

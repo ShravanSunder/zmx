@@ -29,6 +29,10 @@ struct CommandBarDataSourceTests {
         WorkspaceStore()
     }
 
+    private func makeRepoCache() -> WorkspaceRepoCache {
+        WorkspaceRepoCache()
+    }
+
     // MARK: - Everything Scope
 
     @Test
@@ -149,6 +153,46 @@ struct CommandBarDataSourceTests {
 
         // Assert
         #expect(items.isEmpty)
+    }
+
+    @Test
+    func test_panesScope_usesProjectedWorktreeLabel() {
+        let store = makeStore()
+        let repoCache = makeRepoCache()
+        let repo = store.addRepo(at: URL(filePath: "/tmp/agent-studio"))
+        let worktree = Worktree(
+            repoId: repo.id,
+            name: "feature-name",
+            path: URL(filePath: "/tmp/agent-studio/feature-name")
+        )
+        store.reconcileDiscoveredWorktrees(repo.id, worktrees: [worktree])
+        repoCache.setWorktreeEnrichment(
+            WorktreeEnrichment(worktreeId: worktree.id, repoId: repo.id, branch: "feature/pane-labels")
+        )
+        let pane = store.createPane(
+            source: .worktree(worktreeId: worktree.id, repoId: repo.id),
+            title: "Shell title",
+            facets: PaneContextFacets(
+                repoId: repo.id,
+                repoName: repo.name,
+                worktreeId: worktree.id,
+                worktreeName: worktree.name,
+                cwd: worktree.path
+            )
+        )
+        store.appendTab(Tab(paneId: pane.id))
+
+        let items = CommandBarDataSource.items(
+            scope: .panes,
+            store: store,
+            repoCache: repoCache,
+            dispatcher: dispatcher
+        )
+
+        let tabItem = items.first { $0.id == "tab-\(store.tabs[0].id.uuidString)" }
+        let paneItem = items.first { $0.id == "pane-\(pane.id.uuidString)" }
+        #expect(tabItem?.title == "agent-studio | feature/pane-labels | feature-name")
+        #expect(paneItem?.title == "agent-studio | feature/pane-labels | feature-name")
     }
 
     // MARK: - Grouping
