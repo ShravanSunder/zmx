@@ -19,9 +19,22 @@ class MainSplitViewController: NSSplitViewController {
     private let actionExecutor: ActionExecutor
     private let tabBarAdapter: TabBarAdapter
     private let viewRegistry: ViewRegistry
+    var onRestoreHostReady: ((CGRect) -> Void)? {
+        didSet {
+            paneTabViewController?.onRestoreHostReady = onRestoreHostReady
+        }
+    }
 
     var terminalContainerBounds: CGRect? {
         paneTabViewController?.terminalContainerBounds
+    }
+
+    var isReadyForRestore: Bool {
+        paneTabViewController?.isReadyForRestore ?? false
+    }
+
+    func armLaunchRestoreReadiness() {
+        paneTabViewController?.armLaunchRestoreReadiness()
     }
 
     init(
@@ -79,6 +92,7 @@ class MainSplitViewController: NSSplitViewController {
             viewRegistry: viewRegistry
         )
         self.paneTabViewController = paneTabVC
+        paneTabVC.onRestoreHostReady = onRestoreHostReady
 
         let paneTabItem = NSSplitViewItem(viewController: paneTabVC)
         paneTabItem.minimumThickness = 400
@@ -223,6 +237,14 @@ class MainSplitViewController: NSSplitViewController {
         var rect = proposedEffectiveRect
         rect.size.width = 1
         return rect
+    }
+
+    override func splitViewDidResizeSubviews(_ notification: Notification) {
+        super.splitViewDidResizeSubviews(notification)
+        RestoreTrace.log(
+            "MainSplitViewController.splitViewDidResizeSubviews splitBounds=\(NSStringFromRect(splitView.bounds)) sidebarCollapsed=\(isSidebarCollapsed)"
+        )
+        paneTabViewController?.syncVisibleTerminalGeometry(reason: "splitViewDidResizeSubviews")
     }
 
     isolated deinit {

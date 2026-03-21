@@ -146,13 +146,13 @@ final class SessionConfigurationTests {
 
     @Test
 
-    func test_zmxDir_pointsToAgentStudioSubdir() {
+    func test_zmxDir_pointsToShortSocketSafeAgentStudioSubdir() {
         // Act
         let config = SessionConfiguration.detect()
 
-        // Assert — should be under ~/.agentstudio/zmx/
+        // Assert — should use the short ~/.agentstudio/z socket root.
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        #expect(config.zmxDir.hasPrefix(homeDir + "/.agentstudio/zmx"))
+        #expect(config.zmxDir.hasPrefix(homeDir + "/.agentstudio/z"))
     }
 
     // MARK: - Terminfo Discovery (Ghostty's own terminfo, independent of zmx)

@@ -5,12 +5,24 @@ import SwiftUI
 class MainWindowController: NSWindowController, NSWindowDelegate {
     private var splitViewController: MainSplitViewController?
     private var sidebarAccessory: NSTitlebarAccessoryViewController?
+    private var awaitsLaunchRestoreResize = false
+    private var awaitsLaunchMaximize = false
 
     private static let windowFrameKey = "windowFrame"
     private static let estimatedTitlebarHeight: CGFloat = 40
 
     var terminalContainerBounds: CGRect? {
         splitViewController?.terminalContainerBounds
+    }
+
+    var isReadyForRestore: Bool {
+        splitViewController?.isReadyForRestore ?? false
+    }
+
+    var onRestoreHostReady: ((CGRect) -> Void)? {
+        didSet {
+            splitViewController?.onRestoreHostReady = onRestoreHostReady
+        }
     }
 
     convenience init(
@@ -51,6 +63,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             viewRegistry: viewRegistry
         )
         self.splitViewController = splitVC
+        splitVC.onRestoreHostReady = onRestoreHostReady
         window.contentViewController = splitVC
 
         // Set up titlebar and toolbar
@@ -66,6 +79,18 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidResize(_ notification: Notification) {
         saveWindowFrame()
+        guard awaitsLaunchRestoreResize else { return }
+        awaitsLaunchRestoreResize = false
+        splitViewController?.armLaunchRestoreReadiness()
+        window?.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    func windowDidBecomeMain(_ notification: Notification) {
+        applyLaunchMaximizeIfNeeded()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        applyLaunchMaximizeIfNeeded()
     }
 
     private func saveWindowFrame() {
@@ -155,6 +180,31 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func toggleSidebar() {
         splitViewController?.toggleSidebar(nil)
+    }
+
+    func awaitLaunchRestoreAfterNextResize() {
+        awaitsLaunchRestoreResize = true
+    }
+
+    func prepareLaunchMaximizeAndRestore() {
+        awaitsLaunchMaximize = true
+    }
+
+    private func applyLaunchMaximizeIfNeeded() {
+        guard awaitsLaunchMaximize else { return }
+        guard let window, let screen = window.screen ?? NSScreen.main else { return }
+        awaitsLaunchMaximize = false
+        let targetFrame = screen.visibleFrame
+        RestoreTrace.log(
+            "MainWindowController.applyLaunchMaximize currentFrame=\(NSStringFromRect(window.frame)) targetFrame=\(NSStringFromRect(targetFrame))"
+        )
+        if window.frame.equalTo(targetFrame) {
+            splitViewController?.armLaunchRestoreReadiness()
+            window.contentView?.layoutSubtreeIfNeeded()
+            return
+        }
+        awaitLaunchRestoreAfterNextResize()
+        window.setFrame(targetFrame, display: true)
     }
 
     @objc private func toggleSidebarAction() {

@@ -303,10 +303,38 @@ extension Ghostty {
                     ),
                     target: target
                 )
+            case .initialSize:
+                if target.tag == GHOSTTY_TARGET_SURFACE, let surface = target.target.surface,
+                    let resolvedSurfaceView = surfaceView(from: surface)
+                {
+                    let size = NSSize(
+                        width: Double(action.action.initial_size.width),
+                        height: Double(action.action.initial_size.height)
+                    )
+                    Task { @MainActor [weak resolvedSurfaceView] in
+                        resolvedSurfaceView?.updateReportedInitialSize(size)
+                    }
+                }
+                return routeUnhandledAction(actionTag: rawActionTag, target: target)
+            case .cellSize:
+                if target.tag == GHOSTTY_TARGET_SURFACE, let surface = target.target.surface,
+                    let resolvedSurfaceView = surfaceView(from: surface)
+                {
+                    let backingSize = NSSize(
+                        width: Double(action.action.cell_size.width),
+                        height: Double(action.action.cell_size.height)
+                    )
+                    Task { @MainActor [weak resolvedSurfaceView] in
+                        guard let resolvedSurfaceView else { return }
+                        let logicalSize = resolvedSurfaceView.convertFromBacking(backingSize)
+                        resolvedSurfaceView.updateReportedCellSize(logicalSize)
+                    }
+                }
+                return routeUnhandledAction(actionTag: rawActionTag, target: target)
             case .closeAllWindows, .toggleMaximize, .toggleFullscreen, .toggleTabOverview,
                 .toggleWindowDecorations, .toggleQuickTerminal, .toggleCommandPalette, .toggleVisibility,
                 .toggleBackgroundOpacity, .gotoWindow, .presentTerminal, .sizeLimit, .resetWindowSize,
-                .initialSize, .cellSize, .scrollbar, .render, .inspector, .showGtkInspector, .renderInspector,
+                .scrollbar, .render, .inspector, .showGtkInspector, .renderInspector,
                 .desktopNotification, .promptTitle, .mouseShape, .mouseVisibility, .mouseOverLink,
                 .rendererHealth, .openConfig, .quitTimer, .floatWindow, .secureInput, .keySequence, .keyTable,
                 .colorChange, .reloadConfig, .configChange, .closeWindow, .undo, .redo, .checkForUpdates,

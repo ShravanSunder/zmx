@@ -643,7 +643,18 @@ extension SurfaceManager {
                     self.onRendererHealthChanged(surfaceViewId: surfaceViewId, isHealthyOverride: isHealthy)
                 case .workingDirectoryUpdated(let surfaceViewId, let rawPwd):
                     self.onWorkingDirectoryChanged(surfaceViewId: surfaceViewId, rawPwd: rawPwd)
-                case .newWindowRequested, .closeSurface:
+                case .closeSurface(let surfaceViewId, let processAlive):
+                    let surfaceId = self.surfaceViewToId[surfaceViewId]
+                    let paneId: UUID? = {
+                        guard let surfaceId else { return nil }
+                        return self.activeSurfaces[surfaceId]?.metadata.paneId
+                            ?? self.hiddenSurfaces[surfaceId]?.metadata.paneId
+                    }()
+                    RestoreTrace.log(
+                        "SurfaceManager.closeSurfaceEvent surface=\(surfaceId?.uuidString ?? "nil") pane=\(paneId?.uuidString ?? "nil") processAlive=\(processAlive)"
+                    )
+                    continue
+                case .newWindowRequested:
                     continue
                 }
             }

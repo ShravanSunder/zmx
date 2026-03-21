@@ -15,7 +15,7 @@ struct SessionConfiguration: Sendable {
     /// Path to the zmx binary. Nil if zmx is not found.
     let zmxPath: String?
 
-    /// Directory for zmx socket/state isolation (~/.agentstudio/zmx/).
+    /// Directory for zmx socket/state isolation (~/.agentstudio/z/).
     let zmxDir: String
 
     /// How often to run health checks on active sessions (seconds).

@@ -30,7 +30,8 @@ extension PaneCoordinator {
     /// Returns the created PaneView, or nil on failure.
     func createViewForContent(
         pane: Pane,
-        initialFrame: NSRect? = nil
+        initialFrame: NSRect? = nil,
+        treatAsRestoredSessionStart: Bool = false
     ) -> PaneView? {
         switch pane.content {
         case .terminal:
@@ -39,7 +40,13 @@ extension PaneCoordinator {
                 let worktree = store.worktree(worktreeId),
                 let repo = store.repo(repoId)
             {
-                return createView(for: pane, worktree: worktree, repo: repo, initialFrame: initialFrame)
+                return createView(
+                    for: pane,
+                    worktree: worktree,
+                    repo: repo,
+                    initialFrame: initialFrame,
+                    treatAsRestoredSessionStart: treatAsRestoredSessionStart
+                )
 
             } else if let parentPaneId = pane.parentPaneId,
                 let parentPane = store.pane(parentPaneId),
@@ -48,10 +55,20 @@ extension PaneCoordinator {
                 let worktree = store.worktree(worktreeId),
                 let repo = store.repo(repoId)
             {
-                return createView(for: pane, worktree: worktree, repo: repo, initialFrame: initialFrame)
+                return createView(
+                    for: pane,
+                    worktree: worktree,
+                    repo: repo,
+                    initialFrame: initialFrame,
+                    treatAsRestoredSessionStart: treatAsRestoredSessionStart
+                )
 
             } else {
-                return createFloatingTerminalView(for: pane, initialFrame: initialFrame)
+                return createFloatingTerminalView(
+                    for: pane,
+                    initialFrame: initialFrame,
+                    treatAsRestoredSessionStart: treatAsRestoredSessionStart
+                )
             }
 
         case .webview(let state):
@@ -112,7 +129,8 @@ extension PaneCoordinator {
         for pane: Pane,
         worktree: Worktree,
         repo: Repo,
-        initialFrame: NSRect? = nil
+        initialFrame: NSRect? = nil,
+        treatAsRestoredSessionStart: Bool = false
     ) -> AgentStudioTerminalView? {
         let workingDir = worktree.path
 
@@ -122,9 +140,14 @@ extension PaneCoordinator {
         var environmentVariables: [String: String] = [:]
         switch pane.provider {
         case .zmx:
+            if let diagnostics = terminalRestoreRuntime.zmxAttachDiagnostics(for: pane, store: store) {
+                RestoreTrace.log(
+                    "createView zmxDiagnostics pane=\(diagnostics.paneId) session=\(diagnostics.sessionId) socketPathLen=\(diagnostics.socketPathLength) socketPathHeadroom=\(diagnostics.socketPathHeadroom) maxSocketPathLen=\(diagnostics.maxSocketPathLength)"
+                )
+            }
             if let attachCommand = terminalRestoreRuntime.zmxAttachCommand(for: pane, store: store) {
                 startupStrategy = .surfaceCommand(attachCommand)
-                showsRestorePresentationDuringStartup = true
+                showsRestorePresentationDuringStartup = treatAsRestoredSessionStart
                 environmentVariables["ZMX_DIR"] = sessionConfig.zmxDir
             } else {
                 Self.logger.error(
@@ -203,7 +226,8 @@ extension PaneCoordinator {
     @discardableResult
     private func createFloatingTerminalView(
         for pane: Pane,
-        initialFrame: NSRect? = nil
+        initialFrame: NSRect? = nil,
+        treatAsRestoredSessionStart: Bool = false
     ) -> AgentStudioTerminalView? {
         let workingDir = pane.metadata.facets.cwd ?? FileManager.default.homeDirectoryForCurrentUser
         let shellCommand = "\(getDefaultShell()) -i -l"
@@ -212,10 +236,18 @@ extension PaneCoordinator {
         var environmentVariables: [String: String] = [:]
 
         if pane.provider == .zmx,
+            let diagnostics = terminalRestoreRuntime.zmxAttachDiagnostics(for: pane, store: store)
+        {
+            RestoreTrace.log(
+                "createFloatingView zmxDiagnostics pane=\(diagnostics.paneId) session=\(diagnostics.sessionId) socketPathLen=\(diagnostics.socketPathLength) socketPathHeadroom=\(diagnostics.socketPathHeadroom) maxSocketPathLen=\(diagnostics.maxSocketPathLength)"
+            )
+        }
+
+        if pane.provider == .zmx,
             let attachCommand = terminalRestoreRuntime.zmxAttachCommand(for: pane, store: store)
         {
             startupStrategy = .surfaceCommand(attachCommand)
-            showsRestorePresentationDuringStartup = true
+            showsRestorePresentationDuringStartup = treatAsRestoredSessionStart
             environmentVariables["ZMX_DIR"] = sessionConfig.zmxDir
             RestoreTrace.log(
                 "createFloatingView zmx pane=\(pane.id) session=\(Self.floatingZmxRestoreSessionId(for: pane, workingDirectory: workingDir)) cwd=\(workingDir.path)"
@@ -478,7 +510,12 @@ extension PaneCoordinator {
         }
 
         Self.logger.info("Creating fresh view for pane \(pane.id)")
-        let restoredView = createView(for: pane, worktree: worktree, repo: repo)
+        let restoredView = createView(
+            for: pane,
+            worktree: worktree,
+            repo: repo,
+            treatAsRestoredSessionStart: true
+        )
         if restoredView == nil, !runtimeWasAlreadyRegistered {
             _ = unregisterRuntime(runtimePaneId)
         }
@@ -491,6 +528,13 @@ extension PaneCoordinator {
     /// Startup is staged so the active tab is restored first, then background tabs
     /// are hydrated cooperatively with yields to keep first-interaction latency low.
     func restoreAllViews(in terminalContainerBounds: CGRect? = nil) async {
+        if let terminalContainerBounds {
+            RestoreTrace.log(
+                "restoreAllViews inputBounds=\(NSStringFromRect(terminalContainerBounds))"
+            )
+        } else {
+            RestoreTrace.log("restoreAllViews inputBounds=nil")
+        }
         let orderedPaneIds = TerminalRestoreScheduler.order(
             Self.orderedUniquePaneIds(store.tabs.flatMap(\.panes)).map(PaneId.init(uuid:)),
             resolver: visibilityTierResolver
@@ -649,7 +693,8 @@ extension PaneCoordinator {
         if viewRegistry.view(for: paneId) != nil
             || createViewForContent(
                 pane: pane,
-                initialFrame: initialFrame(for: pane, resolvedPaneFramesByTabId: resolvedPaneFramesByTabId)
+                initialFrame: initialFrame(for: pane, resolvedPaneFramesByTabId: resolvedPaneFramesByTabId),
+                treatAsRestoredSessionStart: true
             ) != nil
         {
             progress.restored += 1
@@ -668,8 +713,12 @@ extension PaneCoordinator {
     func restoreViewsForActiveTabIfNeeded() {
         guard let activeTab = store.activeTab else { return }
         guard let terminalContainerBounds = terminalContainerBoundsProvider(), !terminalContainerBounds.isEmpty else {
+            RestoreTrace.log("restoreViewsForActiveTabIfNeeded skipped boundsUnavailable")
             return
         }
+        RestoreTrace.log(
+            "restoreViewsForActiveTabIfNeeded activeTab=\(activeTab.id) bounds=\(NSStringFromRect(terminalContainerBounds))"
+        )
         let resolvedPaneFramesByTabId = resolveInitialFramesByTabId(in: terminalContainerBounds)
         let visiblePaneIds = TerminalRestoreScheduler.order(
             store.panes.keys.map(PaneId.init(uuid:)),
@@ -687,7 +736,8 @@ extension PaneCoordinator {
             guard viewRegistry.view(for: paneId) == nil else { continue }
             if createViewForContent(
                 pane: pane,
-                initialFrame: initialFrame(for: pane, resolvedPaneFramesByTabId: resolvedPaneFramesByTabId)
+                initialFrame: initialFrame(for: pane, resolvedPaneFramesByTabId: resolvedPaneFramesByTabId),
+                treatAsRestoredSessionStart: true
             ) != nil {
                 createdAnyViews = true
             }
@@ -726,7 +776,8 @@ extension PaneCoordinator {
                     initialFrame: initialFrame(
                         for: drawerPane,
                         resolvedPaneFramesByTabId: resolvedPaneFramesByTabId
-                    )
+                    ),
+                    treatAsRestoredSessionStart: true
                 ) != nil
             {
                 progress.drawerRestored += 1

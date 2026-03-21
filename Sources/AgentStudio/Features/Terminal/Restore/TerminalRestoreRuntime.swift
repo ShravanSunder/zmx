@@ -2,6 +2,20 @@ import Foundation
 
 @MainActor
 struct TerminalRestoreRuntime {
+    struct ZmxAttachDiagnostics: Sendable {
+        let paneId: UUID
+        let sessionId: String
+        let zmxDir: String
+        let socketPath: String
+        let socketPathLength: Int
+        let maxSocketPathLength: Int
+        let zmxPath: String
+
+        var socketPathHeadroom: Int {
+            maxSocketPathLength - socketPathLength
+        }
+    }
+
     let sessionConfiguration: SessionConfiguration
     let liveSessionIdsProvider: @MainActor @Sendable (SessionConfiguration) async -> Set<String>
 
@@ -85,6 +99,23 @@ struct TerminalRestoreRuntime {
         )
     }
 
+    func zmxAttachDiagnostics(for pane: Pane, store: WorkspaceStore) -> ZmxAttachDiagnostics? {
+        guard pane.provider == .zmx else { return nil }
+        guard let sessionId = zmxSessionId(for: pane, store: store) else { return nil }
+        guard let zmxPath = sessionConfiguration.zmxPath else { return nil }
+
+        let socketPath = "\(sessionConfiguration.zmxDir)/\(sessionId)"
+        return ZmxAttachDiagnostics(
+            paneId: pane.id,
+            sessionId: sessionId,
+            zmxDir: sessionConfiguration.zmxDir,
+            socketPath: socketPath,
+            socketPathLength: socketPath.count,
+            maxSocketPathLength: 104,
+            zmxPath: zmxPath
+        )
+    }
+
     private static func discoverLiveSessionIds(
         sessionConfiguration: SessionConfiguration
     ) async -> Set<String> {
@@ -92,7 +123,7 @@ struct TerminalRestoreRuntime {
         let backend = ZmxBackend(
             zmxPath: zmxPath,
             zmxDir: sessionConfiguration.zmxDir,
-            retryPolicy: .singleAttempt
+            retryPolicy: .standard
         )
         return Set(await backend.discoverOrphanSessions(excluding: []))
     }

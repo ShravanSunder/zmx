@@ -102,9 +102,20 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         guard currentSize != lastReportedSurfaceSize else { return }
         lastReportedSurfaceSize = currentSize
         RestoreTrace.log(
-            "AgentStudioTerminalView.layout pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") paneBounds=\(NSStringFromRect(bounds)) surfaceBounds=\(NSStringFromRect(surface.bounds))"
+            "AgentStudioTerminalView.layout pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") paneBounds=\(NSStringFromRect(bounds)) surfaceBounds=\(NSStringFromRect(surface.bounds)) surfaceMetrics={\(surface.metricsSnapshotDescription())}"
         )
         surface.sizeDidChange(currentSize)
+    }
+
+    func forceGeometrySync(reason: StaticString) {
+        guard let surface = ghosttySurface else { return }
+        guard bounds.size.width > 0, bounds.size.height > 0 else { return }
+        layoutSubtreeIfNeeded()
+        lastReportedSurfaceSize = .zero
+        RestoreTrace.log(
+            "AgentStudioTerminalView.forceGeometrySync pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") reason=\(reason) paneBounds=\(NSStringFromRect(bounds)) surfaceBounds=\(NSStringFromRect(surface.bounds)) surfaceMetrics={\(surface.metricsSnapshotDescription())}"
+        )
+        surface.sizeDidChange(bounds.size)
     }
 
     // MARK: - Surface Display
@@ -113,7 +124,7 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         // Remove existing surface if any
         ghosttySurface?.removeFromSuperview()
         RestoreTrace.log(
-            "AgentStudioTerminalView.displaySurface pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") hostBounds=\(NSStringFromRect(bounds)) incomingSurfaceFrame=\(NSStringFromRect(surfaceView.frame))"
+            "AgentStudioTerminalView.displaySurface pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") hostBounds=\(NSStringFromRect(bounds)) incomingSurfaceFrame=\(NSStringFromRect(surfaceView.frame)) incomingSurfaceMetrics={\(surfaceView.metricsSnapshotDescription())}"
         )
 
         surfaceView.translatesAutoresizingMaskIntoConstraints = false
@@ -129,7 +140,7 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         self.ghosttySurface = surfaceView
         self.lastReportedSurfaceSize = .zero
         RestoreTrace.log(
-            "AgentStudioTerminalView.displaySurface mounted pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil")"
+            "AgentStudioTerminalView.displaySurface mounted pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") mountedSurfaceMetrics={\(surfaceView.metricsSnapshotDescription())}"
         )
 
         // Make this view layer-backed AFTER the surface is created

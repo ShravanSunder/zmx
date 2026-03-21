@@ -77,6 +77,12 @@ extension Ghostty {
         /// Content size for the terminal (may differ from frame during resize)
         private var contentSize: NSSize = .zero
 
+        /// Initial content size reported by Ghostty action callbacks.
+        private(set) var reportedInitialSize: NSSize?
+
+        /// Cell size reported by Ghostty action callbacks.
+        private(set) var reportedCellSize: NSSize?
+
         /// Current working directory reported by the shell via OSC 7
         private(set) var pwd: String? {
             didSet {
@@ -210,6 +216,7 @@ extension Ghostty {
                 RestoreTrace.log("Ghostty.SurfaceView.init success frame=\(NSStringFromRect(frame))")
                 // Set initial size using backing coordinates
                 sizeDidChange(frame.size)
+                logSurfaceSnapshot(reason: "init")
             }
         }
 
@@ -243,6 +250,7 @@ extension Ghostty {
                 if let surface {
                     ghostty_surface_set_focus(surface, true)
                 }
+                logSurfaceSnapshot(reason: "becomeFirstResponder")
             }
             return result
         }
@@ -254,6 +262,7 @@ extension Ghostty {
                 if let surface {
                     ghostty_surface_set_focus(surface, false)
                 }
+                logSurfaceSnapshot(reason: "resignFirstResponder")
             }
             return result
         }
@@ -263,6 +272,7 @@ extension Ghostty {
             RestoreTrace.log(
                 "Ghostty.SurfaceView.viewDidMoveToWindow window=\(window != nil) frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(bounds))"
             )
+            logSurfaceSnapshot(reason: "viewDidMoveToWindow")
 
             if let screen = window?.screen {
                 updateScaleFactor(screen.backingScaleFactor)
@@ -285,6 +295,7 @@ extension Ghostty {
                         "Ghostty.SurfaceView.viewDidMoveToWindow async sizeDidChange size=\(NSStringFromSize(size)) frame=\(NSStringFromRect(self.frame))"
                     )
                     self.sizeDidChange(size)
+                    self.logSurfaceSnapshot(reason: "viewDidMoveToWindow.asyncSizeDidChange")
                 }
             }
         }
@@ -384,6 +395,40 @@ extension Ghostty {
                 UInt32(backingSize.width),
                 UInt32(backingSize.height)
             )
+            ghostty_surface_refresh(surface)
+            logSurfaceSnapshot(reason: "sizeDidChange")
+        }
+
+        func updateReportedInitialSize(_ size: NSSize) {
+            reportedInitialSize = size
+            RestoreTrace.log(
+                "Ghostty.SurfaceView.initialSize reported=\(NSStringFromSize(size)) frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(bounds))"
+            )
+            logSurfaceSnapshot(reason: "initialSizeAction")
+        }
+
+        func updateReportedCellSize(_ size: NSSize) {
+            reportedCellSize = size
+            RestoreTrace.log(
+                "Ghostty.SurfaceView.cellSize reported=\(NSStringFromSize(size)) frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(bounds))"
+            )
+            logSurfaceSnapshot(reason: "cellSizeAction")
+        }
+
+        func metricsSnapshotDescription() -> String {
+            guard let surface else {
+                return "surface=nil"
+            }
+
+            let metrics = ghostty_surface_size(surface)
+            let initialSizeDescription = reportedInitialSize.map(NSStringFromSize) ?? "nil"
+            let cellSizeDescription = reportedCellSize.map(NSStringFromSize) ?? "nil"
+            return
+                "frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(bounds)) contentSize=\(NSStringFromSize(contentSize)) initialSize=\(initialSizeDescription) cellSize=\(cellSizeDescription) columns=\(metrics.columns) rows=\(metrics.rows) widthPx=\(metrics.width_px) heightPx=\(metrics.height_px) cellWidthPx=\(metrics.cell_width_px) cellHeightPx=\(metrics.cell_height_px) focused=\(focused) window=\(window != nil)"
+        }
+
+        private func logSurfaceSnapshot(reason: String) {
+            RestoreTrace.log("Ghostty.SurfaceView.snapshot reason=\(reason) \(metricsSnapshotDescription())")
         }
 
         // MARK: - Input Handling

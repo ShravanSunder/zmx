@@ -74,9 +74,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var oauthService: OAuthService!
     private var appEventTask: Task<Void, Never>?
     private var filesystemPipelineBootTask: Task<Void, Never>?
+    private var launchRestoreTask: Task<Void, Never>?
+    private var hasStartedLaunchRestore = false
 
     private func recordBootStep(_ step: WorkspaceBootStep) {
         RestoreTrace.log("workspace.boot.step=\(step.rawValue)")
+    }
+
+    private func startLaunchRestoreIfNeeded(in terminalContainerBounds: CGRect) {
+        guard !terminalContainerBounds.isEmpty else {
+            RestoreTrace.log("restoreAllViews skipped reason=emptyBounds")
+            appLogger.warning("Launch restore readiness fired with empty terminal container bounds")
+            return
+        }
+        guard !hasStartedLaunchRestore else { return }
+        hasStartedLaunchRestore = true
+        RestoreTrace.log(
+            "startLaunchRestoreIfNeeded bounds=\(NSStringFromRect(terminalContainerBounds)) windowFrame=\(NSStringFromRect(mainWindowController?.window?.frame ?? .zero)) contentRect=\(NSStringFromRect(mainWindowController?.window?.contentLayoutRect ?? .zero))"
+        )
+        launchRestoreTask?.cancel()
+        launchRestoreTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            RestoreTrace.log("restoreAllViews: start")
+            await self.paneCoordinator.restoreAllViews(in: terminalContainerBounds)
+            RestoreTrace.log("restoreAllViews: end registeredViews=\(self.viewRegistry.registeredPaneIds.count)")
+        }
     }
 
     private func executeBootStep(
@@ -343,6 +365,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         paneCoordinator.terminalContainerBoundsProvider = { [weak self] in
             self?.mainWindowController?.terminalContainerBounds
         }
+        mainWindowController?.onRestoreHostReady = { [weak self] terminalContainerBounds in
+            self?.startLaunchRestoreIfNeeded(in: terminalContainerBounds)
+        }
+        mainWindowController?.prepareLaunchMaximizeAndRestore()
         mainWindowController?.showWindow(nil)
         if let window = mainWindowController?.window {
             RestoreTrace.log(
@@ -350,26 +376,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
         } else {
             RestoreTrace.log("mainWindow showWindow: window=nil")
-        }
-
-        // Force maximized after showWindow — macOS state restoration may override
-        // the frame set during init.
-        if let window = mainWindowController?.window, let screen = window.screen ?? NSScreen.main {
-            window.setFrame(screen.visibleFrame, display: true)
-            RestoreTrace.log(
-                "mainWindow forceMaximize screenVisible=\(NSStringFromRect(screen.visibleFrame)) finalFrame=\(NSStringFromRect(window.frame))"
-            )
-        }
-
-        // Restore persisted pane views after the first frame so launch remains responsive.
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await Task.yield()
-            self.mainWindowController?.window?.contentView?.layoutSubtreeIfNeeded()
-            let terminalContainerBounds = self.mainWindowController?.terminalContainerBounds
-            RestoreTrace.log("restoreAllViews: start")
-            await self.paneCoordinator.restoreAllViews(in: terminalContainerBounds)
-            RestoreTrace.log("restoreAllViews: end registeredViews=\(self.viewRegistry.registeredPaneIds.count)")
         }
 
         appEventTask?.cancel()
@@ -404,6 +410,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     isolated deinit {
         appEventTask?.cancel()
         filesystemPipelineBootTask?.cancel()
+        launchRestoreTask?.cancel()
     }
 
     // MARK: - Dependency Check
