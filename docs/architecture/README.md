@@ -115,8 +115,8 @@ Runtime command → PaneCoordinator.dispatchRuntimeCommand()
 Runtime fact → PaneRuntimeEventBus.post(envelope)
   → WorkspaceCacheCoordinator / other consumers subscribe independently
 
-App-level UI intent fan-out → AppEventBus
-AppKit/macOS lifecycle only → NotificationCenter
+App-level notification that is not a command → AppEventBus
+AppKit/macOS lifecycle ingress → ApplicationLifecycleMonitor → AppLifecycleStore / WindowLifecycleStore
 ```
 
 ## Document Index

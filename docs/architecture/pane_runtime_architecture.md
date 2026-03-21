@@ -3008,7 +3008,7 @@ The current codebase uses `NotificationCenter` and `DispatchQueue.main.async` fo
 
 **No dual-path period (data-plane actions).** When a pane runtime action is migrated to the event bus, the corresponding `NotificationCenter.post()` call is deleted in the same commit. There is no compatibility shim where both paths fire. This migration remains per-action (one `GhosttyEvent` case at a time), not big-bang.
 
-**Explicit lifecycle exception:** two `NotificationCenter.post` calls remain in `Ghostty.App` for app/window/surface lifecycle (`.ghosttyNewWindow`, `.ghosttyCloseSurface`). These are control-plane bridge points for AppKit surface/window orchestration, not pane runtime data-plane events.
+**Lifecycle ingress now has its own boundary:** App/window lifecycle is no longer modeled as runtime `NotificationCenter.post` exceptions. `ApplicationLifecycleMonitor` owns AppKit ingress and writes `AppLifecycleStore` / `WindowLifecycleStore`, while Ghostty surface close/CWD/renderer-health handling uses typed local/runtime boundaries.
 
 ---
 

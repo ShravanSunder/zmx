@@ -1,4 +1,7 @@
 import AppKit
+import os.log
+
+private let appDelegateLifecycleLogger = Logger(subsystem: "com.agentstudio", category: "AppDelegate")
 
 @MainActor
 extension AppDelegate {
@@ -18,18 +21,6 @@ extension AppDelegate {
             else { return }
             splitViewController.savePersistentUIState()
         }
-    }
-
-    func showRepoCommandBar() {
-        showCommandBarRepos()
-    }
-
-    func refreshWorktrees() {
-        Task { await handleRefreshWorktreesRequested() }
-    }
-
-    func refocusActivePane() {
-        mainWindowController?.refocusActivePane()
     }
 
     func wireLifecycleConsumers() {
@@ -53,5 +44,26 @@ extension AppDelegate {
         guard !store.watchedPaths.isEmpty else { return }
         _ = await watchedFolderCommands.refreshWatchedFolders(store.watchedPaths.map(\.path))
         paneCoordinator.syncFilesystemRootsAndActivity()
+    }
+
+    @objc func showCommandBarRepos() {
+        appDelegateLifecycleLogger.info("showCommandBarRepos triggered")
+        guard let window = NSApp.keyWindow ?? mainWindowController?.window else {
+            appDelegateLifecycleLogger.warning("No window available for command bar (repos)")
+            return
+        }
+        commandBarController.show(prefix: "#", parentWindow: window)
+    }
+
+    func showRepoCommandBar() {
+        showCommandBarRepos()
+    }
+
+    func refreshWorktrees() {
+        Task { await handleRefreshWorktreesRequested() }
+    }
+
+    func refocusActivePane() {
+        mainWindowController?.refocusActivePane()
     }
 }

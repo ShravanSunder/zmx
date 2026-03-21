@@ -203,6 +203,7 @@ enum ActionResolver {
         from tabs: [T],
         activeTabId: UUID?,
         isManagementModeActive: Bool,
+        knownRepoIds: Set<UUID> = [],
         knownWorktreeIds: Set<UUID> = [],
         drawerParentByPaneId: [UUID: UUID] = [:]
     ) -> ActionStateSnapshot {
@@ -216,6 +217,7 @@ enum ActionResolver {
             },
             activeTabId: activeTabId,
             isManagementModeActive: isManagementModeActive,
+            knownRepoIds: knownRepoIds,
             knownWorktreeIds: knownWorktreeIds,
             drawerParentByPaneId: drawerParentByPaneId
         )

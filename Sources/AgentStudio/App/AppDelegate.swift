@@ -39,19 +39,20 @@ enum ZmxOrphanCleanupPlanner {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var mainWindowController: MainWindowController?
     // MARK: - Shared Services (created once at launch)
-    private var store: WorkspaceStore!
+    // Module-internal to support focused same-type AppDelegate extensions.
+    var store: WorkspaceStore!
     private var workspaceRepoCache: WorkspaceRepoCache!
     private var workspaceUIStore: WorkspaceUIStore!
     private var workspaceCacheCoordinator: WorkspaceCacheCoordinator!
-    private var watchedFolderCommands: (any WatchedFolderCommandHandling)!
+    var watchedFolderCommands: (any WatchedFolderCommandHandling)!
     private var viewRegistry: ViewRegistry!
-    private var paneCoordinator: PaneCoordinator!
+    var paneCoordinator: PaneCoordinator!
     private var executor: ActionExecutor!
     private var tabBarAdapter: TabBarAdapter!
     private var runtime: SessionRuntime!
-    private var appLifecycleStore: AppLifecycleStore!
+    var appLifecycleStore: AppLifecycleStore!
     private var windowLifecycleStore: WindowLifecycleStore!
-    private var applicationLifecycleMonitor: ApplicationLifecycleMonitor!
+    var applicationLifecycleMonitor: ApplicationLifecycleMonitor!
     // MARK: - Command Bar
     private(set) var commandBarController: CommandBarPanelController!
     // MARK: - OAuth
@@ -182,6 +183,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 await pipeline.applyScopeChange(change)
             }
         )
+        paneCoordinator.removeRepoHandler = { [weak self] repoId in
+            self?.workspaceCacheCoordinator.handleRepoRemoval(repoId: repoId)
+            self?.paneCoordinator.syncFilesystemRootsAndActivity()
+        }
         executor = ActionExecutor(coordinator: paneCoordinator, store: store)
         tabBarAdapter = TabBarAdapter(store: store, repoCache: workspaceRepoCache)
         commandBarController = CommandBarPanelController(
@@ -329,6 +334,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             repoCache: workspaceRepoCache,
             uiStore: workspaceUIStore,
             actionExecutor: executor,
+            applicationLifecycleMonitor: applicationLifecycleMonitor,
             tabBarAdapter: tabBarAdapter,
             viewRegistry: viewRegistry
         )
@@ -519,6 +525,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 repoCache: workspaceRepoCache,
                 uiStore: workspaceUIStore,
                 actionExecutor: executor,
+                applicationLifecycleMonitor: applicationLifecycleMonitor,
                 tabBarAdapter: tabBarAdapter,
                 viewRegistry: viewRegistry
             )
@@ -932,21 +939,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         commandBarController.show(prefix: "@", parentWindow: window)
     }
 
-    @objc private func showCommandBarRepos() {
-        appLogger.info("showCommandBarRepos triggered")
-        guard let window = NSApp.keyWindow ?? mainWindowController?.window else {
-            appLogger.warning("No window available for command bar (repos)")
-            return
-        }
-        commandBarController.show(prefix: "#", parentWindow: window)
-    }
 }
 // MARK: - AppCommandRouting
 
 extension AppDelegate: AppCommandRouting {
     func canExecute(_ command: AppCommand) -> Bool {
         switch command {
-        case .addRepo, .addFolder, .removeRepo, .toggleSidebar, .filterSidebar, .signInGitHub, .signInGoogle: true
+        case .addRepo, .addFolder, .toggleSidebar, .filterSidebar, .signInGitHub, .signInGoogle: true
         default: false
         }
     }
@@ -979,10 +978,6 @@ extension AppDelegate: AppCommandRouting {
 
     func execute(_ command: AppCommand, target: UUID, targetType: SearchItemType) -> Bool {
         switch (command, targetType) {
-        case (.removeRepo, .repo):
-            workspaceCacheCoordinator.handleRepoRemoval(repoId: target)
-            paneCoordinator.syncFilesystemRootsAndActivity()
-            return true
         default: return false
         }
     }

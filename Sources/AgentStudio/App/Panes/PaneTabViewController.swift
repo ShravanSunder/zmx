@@ -203,17 +203,11 @@ class PaneTabViewController: NSViewController, CommandHandler {
                     switch event {
                     case .terminalProcessTerminated(let worktreeId, _):
                         self.handleProcessTerminated(worktreeId: worktreeId)
-                    case .repairSurfaceRequested(let paneId):
-                        self.handleRepairSurfaceRequested(paneId: paneId)
                     default:
                         continue
                     }
                 }
             })
-    }
-
-    private func handleRepairSurfaceRequested(paneId: UUID) {
-        dispatchAction(.repair(.recreateSurface(paneId: paneId)))
     }
 
     isolated deinit {
@@ -939,6 +933,8 @@ class PaneTabViewController: NSViewController, CommandHandler {
                 targetPaneId: targetPaneId,
                 direction: .right
             )
+        case (.removeRepo, .repo):
+            return .removeRepo(repoId: target)
         case (.openWorktree, .worktree):
             return .openWorktree(worktreeId: target)
         case (.openNewTerminalInTab, .worktree):
@@ -973,6 +969,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
                 from: store.tabs,
                 activeTabId: store.activeTabId,
                 isManagementModeActive: ManagementModeMonitor.shared.isActive,
+                knownRepoIds: Set(store.repos.map(\.id)),
                 knownWorktreeIds: Set(store.repos.flatMap(\.worktrees).map(\.id))
             )
             switch ActionValidator.validate(action, state: snapshot) {

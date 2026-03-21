@@ -25,4 +25,18 @@ final class ApplicationLifecycleMonitor {
         appLifecycleStore.markTerminating()
         onWillTerminate()
     }
+
+    func handleWindowRegistered(_ windowId: UUID) {
+        windowLifecycleStore.recordWindowRegistered(windowId)
+    }
+
+    func handleWindowDidBecomeKey(_ windowId: UUID) {
+        windowLifecycleStore.recordWindowBecameKey(windowId)
+        windowLifecycleStore.recordWindowBecameFocused(windowId)
+    }
+
+    func handleWindowDidResignKey(_ windowId: UUID) {
+        windowLifecycleStore.recordWindowResignedKey(windowId)
+        windowLifecycleStore.recordWindowResignedFocused(windowId)
+    }
 }

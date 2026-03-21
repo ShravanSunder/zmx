@@ -39,4 +39,23 @@ struct ApplicationLifecycleMonitorTests {
 
         #expect(appStore.isTerminating == true)
     }
+
+    @Test("updates window lifecycle store through key-window ingress")
+    func test_applicationLifecycleMonitor_updatesWindowLifecycleStore() {
+        let appStore = AppLifecycleStore()
+        let windowStore = WindowLifecycleStore()
+        let monitor = ApplicationLifecycleMonitor(
+            appLifecycleStore: appStore,
+            windowLifecycleStore: windowStore
+        )
+        let windowId = UUID()
+
+        monitor.handleWindowRegistered(windowId)
+        monitor.handleWindowDidBecomeKey(windowId)
+        monitor.handleWindowDidResignKey(windowId)
+
+        #expect(windowStore.registeredWindowIds.contains(windowId))
+        #expect(windowStore.keyWindowId == nil)
+        #expect(windowStore.focusedWindowId == nil)
+    }
 }

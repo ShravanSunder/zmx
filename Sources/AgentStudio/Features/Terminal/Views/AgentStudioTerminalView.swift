@@ -16,6 +16,7 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
     private(set) var isProcessRunning = false
     private var errorOverlay: SurfaceErrorOverlayView?
     private let fallbackTitle: String
+    var onRepairRequested: ((UUID) -> Void)?
 
     /// The current terminal title
     var title: String {
@@ -187,7 +188,7 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         removeSurface()
 
         // Request coordinator to recreate the surface
-        AppEventBus.post(.repairSurfaceRequested(paneId: paneId))
+        onRepairRequested?(paneId)
         hideErrorOverlay()
     }
 

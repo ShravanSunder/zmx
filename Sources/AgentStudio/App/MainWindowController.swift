@@ -5,6 +5,8 @@ import SwiftUI
 class MainWindowController: NSWindowController, NSWindowDelegate {
     private var splitViewController: MainSplitViewController?
     private var sidebarAccessory: NSTitlebarAccessoryViewController?
+    private var applicationLifecycleMonitor: ApplicationLifecycleMonitor!
+    private let windowId = UUID()
 
     private static let windowFrameKey = "windowFrame"
     private static let estimatedTitlebarHeight: CGFloat = 40
@@ -14,6 +16,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         repoCache: WorkspaceRepoCache,
         uiStore: WorkspaceUIStore,
         actionExecutor: ActionExecutor,
+        applicationLifecycleMonitor: ApplicationLifecycleMonitor,
         tabBarAdapter: TabBarAdapter, viewRegistry: ViewRegistry
     ) {
         let window = NSWindow(
@@ -35,7 +38,9 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         self.init(window: window)
+        self.applicationLifecycleMonitor = applicationLifecycleMonitor
         window.delegate = self
+        applicationLifecycleMonitor.handleWindowRegistered(windowId)
 
         // Create and set content view controller
         let splitVC = MainSplitViewController(
@@ -62,6 +67,14 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidResize(_ notification: Notification) {
         saveWindowFrame()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        applicationLifecycleMonitor.handleWindowDidBecomeKey(windowId)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        applicationLifecycleMonitor.handleWindowDidResignKey(windowId)
     }
 
     private func saveWindowFrame() {
