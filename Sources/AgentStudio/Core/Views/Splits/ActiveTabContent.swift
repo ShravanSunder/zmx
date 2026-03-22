@@ -42,6 +42,7 @@ struct ActiveTabContent: View {
         let tree = tab.flatMap { viewRegistry.renderTree(for: $0.layout) }
         let registeredPaneCount = tab?.paneIds.filter { viewRegistry.view(for: $0) != nil }.count ?? 0
         let tabPaneCount = tab?.paneIds.count ?? 0
+        // swiftlint:disable:next redundant_discardable_let
         let _ = Self.traceBody(
             activeTabId: activeTabId,
             viewRevision: currentViewRevision,
