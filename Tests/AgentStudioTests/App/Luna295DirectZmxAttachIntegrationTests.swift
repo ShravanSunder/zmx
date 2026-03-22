@@ -32,6 +32,17 @@ struct Luna295DirectZmxAttachIntegrationTests {
             surfaceManager: surfaceManager,
             runtimeRegistry: .shared
         )
+        coordinator.terminalRestoreRuntime = TerminalRestoreRuntime(
+            sessionConfiguration: SessionConfiguration(
+                isEnabled: true,
+                backgroundRestorePolicy: .existingSessionsOnly,
+                zmxPath: "/tmp/fake-zmx",
+                zmxDir: "/tmp/fake-zmx-dir",
+                healthCheckInterval: 30,
+                maxCheckpointAge: 60
+            ),
+            liveSessionIdsProvider: { _ in [] }
+        )
         return Harness(
             store: store,
             viewRegistry: viewRegistry,

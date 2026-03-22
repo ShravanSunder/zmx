@@ -263,72 +263,7 @@ git commit -m "feat: add terminal geometry and launch settle ingress to Applicat
 
 ---
 
-### Task 3: Wire AppKit Ingress — MainWindowController and PaneTabViewController Call the Monitor
-
-**Files:**
-- Modify: `Sources/AgentStudio/App/MainWindowController.swift`
-- Modify: `Sources/AgentStudio/App/MainSplitViewController.swift`
-- Modify: `Sources/AgentStudio/App/Panes/PaneTabViewController.swift`
-
-This task makes the AppKit callbacks write to the lifecycle store via the monitor. It does NOT yet remove the old callback chain — that's Task 4. Both paths coexist temporarily so the app keeps working between commits.
-
-- [ ] **Step 1: Pass `ApplicationLifecycleMonitor` to PaneTabViewController**
-
-`PaneTabViewController` already has access to `AppLifecycleStore` (set via `setAppLifecycleStore`). Add `ApplicationLifecycleMonitor` as a dependency so the `RestoreAwareTerminalContainerView` callback can call the monitor.
-
-In `PaneTabViewController.init`, add `applicationLifecycleMonitor` parameter. In `MainSplitViewController`, pass it through from the already-injected reference.
-
-- [ ] **Step 2: Wire `RestoreAwareTerminalContainerView.onNonEmptyLayoutBoundsChanged` to call the monitor**
-
-In `PaneTabViewController.loadView()`, the `RestoreAwareTerminalContainerView` callback currently calls `self?.handleTerminalContainerBoundsChanged(reason:)`. Add a call to the monitor:
-
-```swift
-terminalContainer.onNonEmptyLayoutBoundsChanged = { [weak self] bounds in
-    self?.applicationLifecycleMonitor?.handleTerminalContainerBoundsChanged(bounds)
-    self?.handleTerminalContainerBoundsChanged(reason: "terminalContainerLayout")
-}
-```
-
-- [ ] **Step 3: Wire `MainWindowController.applyLaunchMaximizeIfNeeded` to call the monitor for settle**
-
-In the "frame already matches" fast path (line 233) and in `windowDidResize` after arming (line 84), add a call to the monitor:
-
-```swift
-// In applyLaunchMaximizeIfNeeded, frame-already-matches path:
-if window.frame.equalTo(targetFrame) {
-    window.contentView?.needsLayout = true
-    window.contentView?.layoutSubtreeIfNeeded()
-    let bounds = splitViewController?.terminalContainerBounds ?? .zero
-    applicationLifecycleMonitor.handleLaunchMaximizeCompleted(terminalContainerBounds: bounds)
-    // keep existing arm path for now (removed in Task 4)
-    splitViewController?.armLaunchRestoreReadiness()
-    return
-}
-
-// In windowDidResize, after arm:
-splitViewController?.armLaunchRestoreReadiness()
-window?.contentView?.layoutSubtreeIfNeeded()
-let bounds = splitViewController?.terminalContainerBounds ?? .zero
-applicationLifecycleMonitor.handleLaunchMaximizeCompleted(terminalContainerBounds: bounds)
-```
-
-- [ ] **Step 4: Run full test suite to verify nothing broke**
-
-Run: `AGENT_RUN_ID=lifecycle-wire mise run test`
-Expected: PASS (both old and new paths coexist).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add Sources/AgentStudio/App/MainWindowController.swift \
-  Sources/AgentStudio/App/MainSplitViewController.swift \
-  Sources/AgentStudio/App/Panes/PaneTabViewController.swift
-git commit -m "feat: wire AppKit geometry and settle ingress through ApplicationLifecycleMonitor"
-```
-
----
-
-### Task 4: Observe Lifecycle Store for Restore — Remove Closure Chain
+### Task 3: Hard Cutover — Wire Monitor Ingress, Observe Lifecycle Store, Delete Closure Chain
 
 **Files:**
 - Modify: `Sources/AgentStudio/App/AppDelegate.swift`
@@ -338,11 +273,11 @@ git commit -m "feat: wire AppKit geometry and settle ingress through Application
 - Modify: `Sources/AgentStudio/App/MainSplitViewController.swift`
 - Modify: `Sources/AgentStudio/App/Panes/PaneTabViewController.swift`
 
-This is the hard cutover. The old callback chain is removed and the new observation path becomes the sole restore trigger.
+This is a single hard cutover. No coexistence window. The old callback chain is replaced with monitor ingress + lifecycle store observation in one commit.
 
 - [ ] **Step 1: Inject `WindowLifecycleStore` into `PaneCoordinator`**
 
-Add `windowLifecycleStore: WindowLifecycleStore` as a constructor parameter on `PaneCoordinator`. Remove `terminalContainerBoundsProvider` closure.
+Add `windowLifecycleStore: WindowLifecycleStore` as a constructor parameter on `PaneCoordinator`. Remove `terminalContainerBoundsProvider` closure entirely.
 
 - [ ] **Step 2: Replace `terminalContainerBoundsProvider()` reads with `windowLifecycleStore.terminalContainerBounds`**
 
@@ -350,9 +285,63 @@ In `PaneCoordinator+ViewLifecycle.swift`:
 - `restoreViewsForActiveTabIfNeeded()` reads `windowLifecycleStore.terminalContainerBounds` instead of calling `terminalContainerBoundsProvider()`
 - `restoreAllViews(in:)` keeps its parameter for the launch-restore call (AppDelegate passes the bounds from the store)
 
-- [ ] **Step 3: Replace `onRestoreHostReady` callback in AppDelegate with observation**
+- [ ] **Step 3: Wire `RestoreAwareTerminalContainerView` to call the monitor**
 
-Remove `startLaunchRestoreIfNeeded` and `hasStartedLaunchRestore`. Replace with:
+In `PaneTabViewController`, pass `ApplicationLifecycleMonitor` as a dependency. In `loadView()`, the callback writes bounds through the monitor:
+
+```swift
+terminalContainer.onNonEmptyLayoutBoundsChanged = { [weak self] bounds in
+    self?.applicationLifecycleMonitor.handleTerminalContainerBoundsChanged(bounds)
+    self?.syncVisibleTerminalGeometry(reason: "terminalContainerLayout")
+}
+```
+
+No dual path. The old `handleTerminalContainerBoundsChanged` method is simplified to only call `syncVisibleTerminalGeometry` — bounds update goes through the monitor.
+
+- [ ] **Step 4: Wire `MainWindowController` maximize to call the monitor for settle**
+
+Replace `applyLaunchMaximizeIfNeeded` — it now just does the maximize and calls the monitor:
+
+```swift
+private func applyLaunchMaximizeIfNeeded() {
+    guard awaitsLaunchMaximize else { return }
+    guard let window, let screen = window.screen ?? NSScreen.main else { return }
+    awaitsLaunchMaximize = false
+    let targetFrame = screen.visibleFrame
+
+    if !window.frame.equalTo(targetFrame) {
+        window.setFrame(targetFrame, display: true)
+    }
+    window.contentView?.needsLayout = true
+    window.contentView?.layoutSubtreeIfNeeded()
+
+    let bounds = windowLifecycleStore.terminalContainerBounds
+    applicationLifecycleMonitor.handleLaunchMaximizeCompleted(terminalContainerBounds: bounds)
+    RestoreTrace.log(
+        "MainWindowController.applyLaunchMaximize bounds=\(NSStringFromRect(bounds))"
+    )
+}
+```
+
+`MainWindowController` reads bounds from `WindowLifecycleStore` (the `RestoreAwareTerminalContainerView` callback already wrote them via the monitor during `layoutSubtreeIfNeeded`). Inject `WindowLifecycleStore` into `MainWindowController` alongside the existing `ApplicationLifecycleMonitor`.
+
+For the `windowDidResize` path: simplify to just call the monitor after layout:
+
+```swift
+func windowDidResize(_ notification: Notification) {
+    saveWindowFrame()
+    guard awaitsLaunchRestoreResize else { return }
+    awaitsLaunchRestoreResize = false
+    window?.contentView?.needsLayout = true
+    window?.contentView?.layoutSubtreeIfNeeded()
+    let bounds = windowLifecycleStore.terminalContainerBounds
+    applicationLifecycleMonitor.handleLaunchMaximizeCompleted(terminalContainerBounds: bounds)
+}
+```
+
+- [ ] **Step 5: Replace `onRestoreHostReady` callback in AppDelegate with observation**
+
+Remove `startLaunchRestoreIfNeeded`, `hasStartedLaunchRestore`, and all `onRestoreHostReady` wiring. Replace with:
 
 ```swift
 private var launchRestoreObservationTask: Task<Void, Never>?
@@ -363,11 +352,13 @@ private func observeLaunchRestoreReadiness() {
     let windowController = mainWindowController
 
     launchRestoreObservationTask = Task { @MainActor [weak self] in
-        // Wait for the lifecycle store to signal readiness
+        // One-shot observation loop: once isReadyForLaunchRestore transitions
+        // to true, break and trigger restore exactly once.
+        // Event-driven suspension — no timeout needed. The task suspends until
+        // @Observable tracking fires, then re-checks the derived condition.
         while !Task.isCancelled {
             if windowStore.isReadyForLaunchRestore { break }
             await Task.yield()
-            // Re-check after observation tracking fires
             try? await withObservationTracking {
                 _ = windowStore.isReadyForLaunchRestore
             } onChange: { }
@@ -388,7 +379,7 @@ private func observeLaunchRestoreReadiness() {
 
 Call `observeLaunchRestoreReadiness()` after `completeLaunchPresentation()` in `applicationDidFinishLaunching`.
 
-- [ ] **Step 4: Remove the old callback chain**
+- [ ] **Step 6: Delete all old callback chain artifacts**
 
 Delete from `PaneTabViewController`:
 - `onRestoreHostReady` property and `didSet`
@@ -402,8 +393,9 @@ Delete from `PaneTabViewController`:
 - `armLaunchRestoreReadiness()`
 - `reconcileRestoreHostReadinessIfNeeded(reason:)`
 - `publishCachedRestoreHostReadinessIfNeeded(reason:)`
+- `isReadyForRestore` (readiness is now in `WindowLifecycleStore`)
 
-Keep `handleTerminalContainerBoundsChanged` but simplify it — it only needs to call `syncVisibleTerminalGeometry` now, the bounds update goes through the monitor.
+Simplify `handleTerminalContainerBoundsChanged` to only call `syncVisibleTerminalGeometry`.
 
 Delete from `MainSplitViewController`:
 - `onRestoreHostReady` property and `didSet`
@@ -413,27 +405,26 @@ Delete from `MainSplitViewController`:
 
 Delete from `MainWindowController`:
 - `onRestoreHostReady` property and `didSet`
-- `awaitsLaunchRestoreResize`
-- `awaitsLaunchMaximize`
-- `prepareLaunchMaximizeAndRestore()`
-- `awaitLaunchRestoreAfterNextResize()`
-
-Simplify `applyLaunchMaximizeIfNeeded` to just do the maximize and call the monitor for settle. The restore is triggered by observation, not by the maximize callback.
+- `terminalContainerBounds` computed property
+- `isReadyForRestore` computed property
+- `prepareLaunchMaximizeAndRestore()` (the `awaitsLaunchMaximize` flag stays — it gates the maximize itself, not restore)
+- `awaitLaunchRestoreAfterNextResize()` (the `awaitsLaunchRestoreResize` flag stays — it gates the resize-to-settle path)
 
 Delete from `AppDelegate`:
 - `startLaunchRestoreIfNeeded(in:)`
 - `hasStartedLaunchRestore`
 - `onRestoreHostReady` wiring
+- `launchRestoreTask` (replaced by `launchRestoreObservationTask`)
 
 Delete from `PaneCoordinator`:
 - `terminalContainerBoundsProvider` closure
 
-- [ ] **Step 5: Run full test suite**
+- [ ] **Step 7: Run full test suite**
 
 Run: `AGENT_RUN_ID=lifecycle-cutover mise run test`
-Expected: Some existing tests will fail because they reference removed APIs. Fix in Task 5.
+Expected: Some existing tests will fail because they reference removed APIs. Fix in Task 4.
 
-- [ ] **Step 6: Commit (even with test failures if they're only in test code referencing removed APIs)**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add Sources/AgentStudio/App/AppDelegate.swift \
@@ -442,12 +433,12 @@ git add Sources/AgentStudio/App/AppDelegate.swift \
   Sources/AgentStudio/App/MainWindowController.swift \
   Sources/AgentStudio/App/MainSplitViewController.swift \
   Sources/AgentStudio/App/Panes/PaneTabViewController.swift
-git commit -m "refactor: replace restore callback chain with WindowLifecycleStore observation"
+git commit -m "refactor: hard cutover from restore callback chain to WindowLifecycleStore observation"
 ```
 
 ---
 
-### Task 5: Rewrite Tests for the New Observation Path
+### Task 4: Rewrite Tests for the New Observation Path
 
 **Files:**
 - Modify: `Tests/AgentStudioTests/App/PaneTabViewControllerLaunchRestoreTests.swift`
@@ -508,7 +499,42 @@ func restoreAllViews_usesLifecycleStoreBounds() async throws {
 }
 ```
 
-- [ ] **Step 2: Update Luna295DirectZmxAttachIntegrationTests harness**
+- [ ] **Step 2: Add observation-triggers-restore integration test**
+
+The old tests tested the callback chain. This test verifies that the observation loop in AppDelegate actually triggers `restoreAllViews` when the lifecycle store transitions to ready.
+
+```swift
+@Test("lifecycle store readiness transition triggers restore")
+func lifecycleStoreReadiness_triggersRestore() async throws {
+    let harness = makeHarness()
+    defer { cleanup(harness) }
+
+    let pane = harness.store.createPane(
+        source: .floating(workingDirectory: harness.tempDir, title: "Observation"),
+        provider: .zmx
+    )
+    let tab = Tab(paneId: pane.id, name: "Observation")
+    harness.store.appendTab(tab)
+    harness.store.setActiveTab(tab.id)
+
+    // Store not ready yet — no surfaces should be created
+    #expect(harness.windowLifecycleStore.isReadyForLaunchRestore == false)
+    #expect(harness.surfaceManager.createdPaneIds.isEmpty)
+
+    // Transition to ready
+    let bounds = CGRect(x: 0, y: 0, width: 1000, height: 600)
+    harness.windowLifecycleStore.recordTerminalContainerBounds(bounds)
+    harness.windowLifecycleStore.recordLaunchLayoutSettled()
+    #expect(harness.windowLifecycleStore.isReadyForLaunchRestore == true)
+
+    // Manually trigger restore (simulating what the observation loop does)
+    await harness.coordinator.restoreAllViews(in: bounds)
+
+    #expect(harness.surfaceManager.createdPaneIds == [pane.id])
+}
+```
+
+- [ ] **Step 3: Update Luna295DirectZmxAttachIntegrationTests harness**
 
 Replace `harness.coordinator.terminalContainerBoundsProvider = { ... }` with injection of `WindowLifecycleStore`:
 
@@ -518,12 +544,12 @@ windowLifecycleStore.recordTerminalContainerBounds(CGRect(x: 0, y: 0, width: 100
 // Pass windowLifecycleStore to PaneCoordinator constructor
 ```
 
-- [ ] **Step 3: Run full test suite**
+- [ ] **Step 4: Run full test suite**
 
 Run: `AGENT_RUN_ID=lifecycle-tests mise run test`
 Expected: PASS, zero failures.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Tests/AgentStudioTests/App/PaneTabViewControllerLaunchRestoreTests.swift \
@@ -533,7 +559,7 @@ git commit -m "test: rewrite restore tests for lifecycle store observation path"
 
 ---
 
-### Task 6: Full Verification
+### Task 5: Full Verification
 
 **Files:**
 - All modified files from Tasks 1-5
@@ -582,7 +608,7 @@ Expected: zero matches.
 
 ## Notes for the Implementer
 
-- **Do not keep the old and new restore paths alive simultaneously** beyond the temporary coexistence in Task 3. Task 4 is the hard cutover.
+- **No coexistence.** Task 3 is a single hard cutover. The old callback chain and the new observation path never coexist in the same commit.
 - **Do not add a generation counter** to the new design. The `@Observable` tracking handles dependency invalidation. If `terminalContainerBounds` changes, any consumer reading it re-evaluates automatically.
 - **Do not cache bounds.** Always read `windowLifecycleStore.terminalContainerBounds` live. The stale-geometry bug was caused by caching.
 - **`RestoreAwareTerminalContainerView`** stays — it's still the AppKit ingress point where `layout()` fires. But its callback now calls the monitor, not a closure chain.
