@@ -64,6 +64,12 @@ final class ActionExecutor {
         coordinator.restoreViewsForActiveTabIfNeeded()
     }
 
+    func syncTerminalGeometry(in terminalContainerBounds: CGRect, reason: StaticString) {
+        Task { @MainActor [weak coordinator] in
+            await coordinator?.syncTerminalGeometry(in: terminalContainerBounds, reason: reason)
+        }
+    }
+
     /// Validate/canonicalize a PaneAction against current state, then execute it.
     func execute(_ action: PaneAction) {
         let snapshot = ActionResolver.snapshot(

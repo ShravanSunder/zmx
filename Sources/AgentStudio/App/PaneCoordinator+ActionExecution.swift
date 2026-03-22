@@ -2,6 +2,19 @@ import Foundation
 
 @MainActor
 extension PaneCoordinator {
+    private func scheduleGeometrySyncIfPossible(reason: StaticString) {
+        guard let terminalContainerBounds = terminalContainerBoundsProvider(), !terminalContainerBounds.isEmpty else {
+            RestoreTrace.log("scheduleGeometrySyncIfPossible skipped reason=\(reason) detail=boundsUnavailable")
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            await self.syncTerminalGeometry(in: terminalContainerBounds, reason: reason)
+        }
+    }
+
     static func computeSwitchArrangementTransitions(
         previousVisiblePaneIds: Set<UUID>,
         previouslyMinimizedPaneIds: Set<UUID>,
@@ -163,12 +176,15 @@ extension PaneCoordinator {
 
         case .resizePane(let tabId, let splitId, let ratio):
             store.resizePane(tabId: tabId, splitId: splitId, ratio: ratio)
+            scheduleGeometrySyncIfPossible(reason: "resizePaneCommand")
 
         case .equalizePanes(let tabId):
             store.equalizePanes(tabId: tabId)
+            scheduleGeometrySyncIfPossible(reason: "equalizePanesCommand")
 
         case .toggleSplitZoom(let tabId, let paneId):
             store.toggleZoom(paneId: paneId, inTab: tabId)
+            scheduleGeometrySyncIfPossible(reason: "toggleSplitZoomCommand")
 
         case .moveTab(let tabId, let delta):
             store.moveTabByDelta(tabId: tabId, delta: delta)
@@ -177,14 +193,17 @@ extension PaneCoordinator {
             if store.minimizePane(paneId, inTab: tabId) {
                 detachForViewSwitch(paneId: paneId)
             }
+            scheduleGeometrySyncIfPossible(reason: "minimizePaneCommand")
 
         case .expandPane(let tabId, let paneId):
             store.expandPane(paneId, inTab: tabId)
             restoreViewsForActiveTabIfNeeded()
             reattachForViewSwitch(paneId: paneId)
+            scheduleGeometrySyncIfPossible(reason: "expandPaneCommand")
 
         case .resizePaneByDelta(let tabId, let paneId, let direction, let amount):
             store.resizePaneByDelta(tabId: tabId, paneId: paneId, direction: direction, amount: amount)
+            scheduleGeometrySyncIfPossible(reason: "resizePaneByDeltaCommand")
 
         case .mergeTab(let sourceTabId, let targetTabId, let targetPaneId, let direction):
             executeMergeTab(
@@ -238,6 +257,7 @@ extension PaneCoordinator {
             for paneId in transitions.paneIdsToReattach {
                 reattachForViewSwitch(paneId: paneId)
             }
+            scheduleGeometrySyncIfPossible(reason: "switchArrangementCommand")
 
         case .renameArrangement(let tabId, let arrangementId, let name):
             store.renameArrangement(arrangementId, name: name, inTab: tabId)

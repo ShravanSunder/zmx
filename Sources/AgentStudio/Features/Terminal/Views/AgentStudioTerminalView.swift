@@ -107,15 +107,22 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         surface.sizeDidChange(currentSize)
     }
 
-    func forceGeometrySync(reason: StaticString) {
+    func syncToResolvedPaneFrame(_ frame: CGRect, reason: StaticString) {
         guard let surface = ghosttySurface else { return }
-        guard bounds.size.width > 0, bounds.size.height > 0 else { return }
-        layoutSubtreeIfNeeded()
-        lastReportedSurfaceSize = .zero
+        let resolvedSize = NSSize(width: frame.width, height: frame.height)
+        guard resolvedSize.width > 0, resolvedSize.height > 0 else { return }
+
+        if window != nil {
+            layoutSubtreeIfNeeded()
+        } else {
+            surface.setFrameSize(resolvedSize)
+        }
+
+        lastReportedSurfaceSize = resolvedSize
         RestoreTrace.log(
-            "AgentStudioTerminalView.forceGeometrySync pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") reason=\(reason) paneBounds=\(NSStringFromRect(bounds)) surfaceBounds=\(NSStringFromRect(surface.bounds)) surfaceMetrics={\(surface.metricsSnapshotDescription())}"
+            "AgentStudioTerminalView.syncToResolvedPaneFrame pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") reason=\(reason) resolvedFrame=\(NSStringFromRect(frame)) paneBounds=\(NSStringFromRect(bounds)) surfaceBounds=\(NSStringFromRect(surface.bounds)) surfaceMetrics={\(surface.metricsSnapshotDescription())}"
         )
-        surface.sizeDidChange(bounds.size)
+        surface.sizeDidChange(resolvedSize)
     }
 
     // MARK: - Surface Display

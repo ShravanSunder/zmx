@@ -82,6 +82,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
     /// Focus tracking — only refocus when the active tab or pane actually changes
     private var lastFocusedTabId: UUID?
     private var lastFocusedPaneId: UUID?
+    private var geometrySyncTask: Task<Void, Never>?
 
     var terminalContainerBounds: CGRect {
         terminalContainer?.bounds ?? .zero
@@ -305,6 +306,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
         if let monitor = arrangementBarEventMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        geometrySyncTask?.cancel()
         for task in notificationTasks {
             task.cancel()
         }
@@ -331,6 +333,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
     private func handleAppKitStateChange() {
         updateEmptyState()
         reconcileRestoreHostReadinessIfNeeded(reason: "appKitStateChange")
+        scheduleTerminalGeometrySync(reason: "appKitStateChange")
 
         // Deactivate management mode if no tabs
         if store.tabs.isEmpty && ManagementModeMonitor.shared.isActive {
@@ -423,20 +426,26 @@ class PaneTabViewController: NSViewController, CommandHandler {
             "PaneTabViewController terminalContainerBoundsChanged reason=\(reason) generation=\(restoreHostBoundsGeneration) bounds=\(NSStringFromRect(terminalContainerBounds)) launchRestoreArmed=\(launchRestoreArmed)"
         )
         RestoreTrace.log(geometryHierarchySnapshot(reason: reason))
-        syncVisibleTerminalGeometry(reason: reason)
+        scheduleTerminalGeometrySync(reason: reason)
         reconcileRestoreHostReadinessIfNeeded(reason: reason)
     }
 
     func syncVisibleTerminalGeometry(reason: StaticString) {
-        let visibleTerminalViews = viewRegistry.allTerminalViews.values.filter { terminalView in
-            terminalView.window != nil && !terminalView.isHidden
-        }
-        guard !visibleTerminalViews.isEmpty else { return }
+        scheduleTerminalGeometrySync(reason: reason)
+    }
+
+    private func scheduleTerminalGeometrySync(reason: StaticString) {
+        guard isReadyForRestore else { return }
+        let bounds = terminalContainerBounds
+        guard !bounds.isEmpty else { return }
+        geometrySyncTask?.cancel()
         RestoreTrace.log(
-            "PaneTabViewController.syncVisibleTerminalGeometry reason=\(reason) count=\(visibleTerminalViews.count)"
+            "PaneTabViewController.scheduleTerminalGeometrySync reason=\(reason) bounds=\(NSStringFromRect(bounds))"
         )
-        for terminalView in visibleTerminalViews {
-            terminalView.forceGeometrySync(reason: reason)
+        geometrySyncTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            self.executor.syncTerminalGeometry(in: bounds, reason: reason)
         }
     }
 
