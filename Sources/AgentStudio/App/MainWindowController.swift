@@ -190,6 +190,10 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         awaitsLaunchMaximize = true
     }
 
+    func syncVisibleTerminalGeometry(reason: StaticString) {
+        splitViewController?.syncVisibleTerminalGeometry(reason: reason)
+    }
+
     func completeLaunchPresentation() {
         guard let window else { return }
         window.makeKeyAndOrderFront(nil)

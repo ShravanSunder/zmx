@@ -97,6 +97,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             RestoreTrace.log("restoreAllViews: start")
             await self.paneCoordinator.restoreAllViews(in: terminalContainerBounds)
+            self.mainWindowController?.syncVisibleTerminalGeometry(reason: "postLaunchRestore")
             RestoreTrace.log("restoreAllViews: end registeredViews=\(self.viewRegistry.registeredPaneIds.count)")
         }
     }

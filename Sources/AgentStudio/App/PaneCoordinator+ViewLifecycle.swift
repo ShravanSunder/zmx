@@ -892,3 +892,15 @@ extension PaneCoordinator {
         SessionConfiguration.defaultShell()
     }
 }
+
+extension PaneCoordinator: SurfaceLifecycleDelegate {
+    func surfaceDidClose(_ surface: ManagedSurface, processAlive: Bool) {
+        guard let paneId = surface.metadata.paneId,
+            let terminalView = viewRegistry.terminalView(for: paneId)
+        else { return }
+        RestoreTrace.log(
+            "PaneCoordinator.surfaceDidClose pane=\(paneId) surface=\(surface.id) processAlive=\(processAlive)"
+        )
+        terminalView.surfaceDidClose(processAlive: processAlive)
+    }
+}

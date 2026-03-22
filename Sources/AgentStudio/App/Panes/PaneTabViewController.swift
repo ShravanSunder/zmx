@@ -8,6 +8,7 @@ import SwiftUI
 private final class RestoreAwareTerminalContainerView: NSView {
     var onNonEmptyLayoutBoundsChanged: ((CGRect) -> Void)?
     private var lastLoggedBounds: CGRect = .zero
+    private var lastPublishedBounds: CGRect = .zero
     private var layoutGeneration: Int = 0
 
     override func layout() {
@@ -32,11 +33,11 @@ private final class RestoreAwareTerminalContainerView: NSView {
     }
 
     private func publishNonEmptyLayoutBoundsChangedIfNeeded() {
-        guard !bounds.isEmpty else { return }
+        guard !bounds.isEmpty, bounds != lastPublishedBounds else { return }
+        lastPublishedBounds = bounds
         onNonEmptyLayoutBoundsChanged?(bounds)
     }
 }
-// swiftlint:enable file_length type_body_length
 
 /// Tab-based terminal controller with custom Ghostty-style tab bar.
 ///
@@ -69,6 +70,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
     private var restoreHostBoundsGeneration = 0
     private var launchRestoreArmed = false
     private var armedRestoreGeneration = 0
+    private var restoreHostReadyTimeoutTask: Task<Void, Never>?
     var onRestoreHostReady: ((CGRect) -> Void)? {
         didSet {
             publishCachedRestoreHostReadinessIfNeeded()
@@ -99,6 +101,35 @@ class PaneTabViewController: NSViewController, CommandHandler {
         RestoreTrace.log(
             "PaneTabViewController armLaunchRestoreReadiness generation=\(armedRestoreGeneration) bounds=\(NSStringFromRect(terminalContainerBounds))"
         )
+        restoreHostReadyTimeoutTask?.cancel()
+        restoreHostReadyTimeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(5))
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            guard launchRestoreArmed, !hasPublishedRestoreHostReady else { return }
+
+            let currentBounds = terminalContainerBounds
+            RestoreTrace.log(
+                "PaneTabViewController restoreReady timeout bounds=\(NSStringFromRect(currentBounds)) ready=\(isReadyForRestore) splitHostingReady=\(splitHostingView != nil)"
+            )
+            guard !currentBounds.isEmpty else { return }
+
+            cachedRestoreHostBounds = currentBounds
+            if !hasReconciledInitialVisibleRestore {
+                hasReconciledInitialVisibleRestore = true
+                executor.restoreVisibleViewsForActiveTabIfNeeded()
+            }
+
+            if let onRestoreHostReady {
+                hasPublishedRestoreHostReady = true
+                onRestoreHostReady(currentBounds)
+            }
+        }
         reconcileRestoreHostReadinessIfNeeded(reason: "armLaunchRestoreReadiness")
     }
 
@@ -305,6 +336,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
         if let monitor = arrangementBarEventMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        restoreHostReadyTimeoutTask?.cancel()
         for task in notificationTasks {
             task.cancel()
         }
@@ -493,6 +525,7 @@ class PaneTabViewController: NSViewController, CommandHandler {
             return
         }
         guard let onRestoreHostReady, let cachedRestoreHostBounds, !cachedRestoreHostBounds.isEmpty else { return }
+        restoreHostReadyTimeoutTask?.cancel()
         hasPublishedRestoreHostReady = true
         RestoreTrace.log(
             "PaneTabViewController restoreReady publish reason=\(reason) generation=\(restoreHostBoundsGeneration) bounds=\(NSStringFromRect(cachedRestoreHostBounds))"

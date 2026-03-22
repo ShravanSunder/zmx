@@ -19,7 +19,6 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
     private let fallbackTitle: String
     private let showsRestorePresentationDuringStartup: Bool
     private let startupGraceDuration: Duration
-    private var surfaceCloseTask: Task<Void, Never>?
     private var startupPresentationTask: Task<Void, Never>?
     private var startupPresentationActive = false
 
@@ -79,7 +78,6 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
     }
 
     isolated deinit {
-        surfaceCloseTask?.cancel()
         startupPresentationTask?.cancel()
 
         // Safety net: coordinator.teardownView() should have detached before dealloc.
@@ -108,14 +106,16 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
     }
 
     func forceGeometrySync(reason: StaticString) {
-        guard let surface = ghosttySurface else { return }
+        guard let surface = ghosttySurface, window != nil else { return }
         guard bounds.size.width > 0, bounds.size.height > 0 else { return }
         layoutSubtreeIfNeeded()
+        let actualSurfaceSize = surface.bounds.size
+        guard actualSurfaceSize.width > 0, actualSurfaceSize.height > 0 else { return }
         lastReportedSurfaceSize = .zero
         RestoreTrace.log(
             "AgentStudioTerminalView.forceGeometrySync pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") reason=\(reason) paneBounds=\(NSStringFromRect(bounds)) surfaceBounds=\(NSStringFromRect(surface.bounds)) surfaceMetrics={\(surface.metricsSnapshotDescription())}"
         )
-        surface.sizeDidChange(bounds.size)
+        surface.sizeDidChange(actualSurfaceSize)
     }
 
     // MARK: - Surface Display
@@ -146,22 +146,6 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         // Make this view layer-backed AFTER the surface is created
         self.wantsLayer = true
         self.layer?.backgroundColor = NSColor.clear.cgColor
-
-        // Listen for surface close
-        surfaceCloseTask?.cancel()
-        let surfaceViewId = ObjectIdentifier(surfaceView)
-        surfaceCloseTask = Task { @MainActor [weak self] in
-            let stream = await GhosttyEventBus.shared.subscribe()
-            for await event in stream {
-                guard !Task.isCancelled else { break }
-                guard let self else { return }
-                if case .closeSurface(let closedSurfaceViewId, _) = event,
-                    closedSurfaceViewId == surfaceViewId
-                {
-                    self.handleSurfaceClose()
-                }
-            }
-        }
 
         beginRestorePresentationIfNeeded()
     }
@@ -263,6 +247,10 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
             "AgentStudioTerminalView.handleSurfaceClose pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil")"
         )
         handleProcessTerminated(exitCode: nil)
+    }
+
+    func surfaceDidClose(processAlive _: Bool) {
+        handleSurfaceClose()
     }
 
     private func beginRestorePresentationIfNeeded() {

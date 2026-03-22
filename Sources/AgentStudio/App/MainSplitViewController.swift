@@ -37,6 +37,10 @@ class MainSplitViewController: NSSplitViewController {
         paneTabViewController?.armLaunchRestoreReadiness()
     }
 
+    func syncVisibleTerminalGeometry(reason: StaticString) {
+        paneTabViewController?.syncVisibleTerminalGeometry(reason: reason)
+    }
+
     init(
         store: WorkspaceStore,
         repoCache: WorkspaceRepoCache,

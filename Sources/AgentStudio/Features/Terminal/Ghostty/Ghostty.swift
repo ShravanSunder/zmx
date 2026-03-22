@@ -144,7 +144,7 @@ extension Ghostty {
             ghosttyLogger.info("Ghostty app initialized successfully")
         }
 
-        deinit {
+        @MainActor deinit {
             focusAppHandleBits.withLock { $0 = nil }
             for task in activeStateTasks {
                 task.cancel()

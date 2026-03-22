@@ -114,6 +114,9 @@ final class PaneCoordinator {
         self.runtimeCommandClock = runtimeCommandClock
         self.filesystemSource = resolvedFilesystemSource
         self.paneFilesystemProjectionStore = paneFilesystemProjectionStore
+        if let concreteSurfaceManager = surfaceManager as? SurfaceManager {
+            concreteSurfaceManager.lifecycleDelegate = self
+        }
         Ghostty.App.setRuntimeRegistry(runtimeRegistry)
         subscribeToCWDChanges()
         setupPrePersistHook()
