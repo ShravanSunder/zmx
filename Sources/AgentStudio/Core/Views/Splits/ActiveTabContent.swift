@@ -42,7 +42,7 @@ struct ActiveTabContent: View {
         let tree = tab.flatMap { viewRegistry.renderTree(for: $0.layout) }
         let registeredPaneCount = tab?.paneIds.filter { viewRegistry.view(for: $0) != nil }.count ?? 0
         let tabPaneCount = tab?.paneIds.count ?? 0
-        _ = Self.traceBody(
+        let _ = Self.traceBody(
             activeTabId: activeTabId,
             viewRevision: currentViewRevision,
             tabPaneCount: tabPaneCount,

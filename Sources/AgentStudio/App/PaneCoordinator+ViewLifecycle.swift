@@ -847,42 +847,6 @@ extension PaneCoordinator {
         }
     }
 
-    func syncTerminalGeometry(in terminalContainerBounds: CGRect, reason: StaticString) async {
-        guard !terminalContainerBounds.isEmpty else {
-            RestoreTrace.log("syncTerminalGeometry skipped reason=\(reason) detail=emptyBounds")
-            return
-        }
-
-        let resolvedPaneFramesByTabId = resolveInitialFramesByTabId(in: terminalContainerBounds)
-        let activeTabId = store.activeTabId
-        let orderedTabs = store.tabs.sorted { lhs, rhs in
-            switch (lhs.id == activeTabId, rhs.id == activeTabId) {
-            case (true, false): return true
-            case (false, true): return false
-            default: return lhs.id.uuidString < rhs.id.uuidString
-            }
-        }
-
-        RestoreTrace.log(
-            "syncTerminalGeometry begin reason=\(reason) activeTab=\(activeTabId?.uuidString ?? "nil") tabCount=\(orderedTabs.count)"
-        )
-
-        for (index, tab) in orderedTabs.enumerated() {
-            guard let paneFrames = resolvedPaneFramesByTabId[tab.id], !paneFrames.isEmpty else { continue }
-            for paneId in tab.paneIds {
-                guard let frame = paneFrames[paneId] else { continue }
-                guard let terminalView = viewRegistry.terminalView(for: paneId) else { continue }
-                terminalView.syncToResolvedPaneFrame(frame, reason: reason)
-            }
-
-            if index > 0 {
-                await Task.yield()
-            }
-        }
-
-        RestoreTrace.log("syncTerminalGeometry end reason=\(reason)")
-    }
-
     private func resolvedDrawerContentRect(
         parentPaneFrame: CGRect,
         tabSize: CGSize
