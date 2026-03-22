@@ -269,6 +269,8 @@ final class WorkspaceStore {
                 if lhs.normalizedWorktreePath.count != rhs.normalizedWorktreePath.count {
                     return lhs.normalizedWorktreePath.count < rhs.normalizedWorktreePath.count
                 }
+                // When two repos claim the same checkout path, prefer the repo with the
+                // larger worktree family so cwd routing matches sidebar ownership dedup.
                 if lhs.repoWorktreeCount != rhs.repoWorktreeCount {
                     return lhs.repoWorktreeCount < rhs.repoWorktreeCount
                 }

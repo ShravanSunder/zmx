@@ -490,21 +490,10 @@ class PaneTabViewController: NSViewController, CommandHandler {
             let activePaneId = tab.activePaneId,
             let pane = store.pane(activePaneId)
         {
-            if let worktreeId = pane.worktreeId {
+            if let worktreeId = worktreeIdForNewTab(from: pane) {
                 dispatchAction(
                     .openNewTerminalInTab(
                         worktreeId: worktreeId,
-                        cwd: pane.metadata.facets.cwd,
-                        title: pane.metadata.title
-                    )
-                )
-                return
-            }
-
-            if let resolved = store.repoAndWorktree(containing: pane.metadata.facets.cwd) {
-                dispatchAction(
-                    .openNewTerminalInTab(
-                        worktreeId: resolved.worktree.id,
                         cwd: pane.metadata.facets.cwd,
                         title: pane.metadata.title
                     )
@@ -523,6 +512,14 @@ class PaneTabViewController: NSViewController, CommandHandler {
         }
 
         dispatchAction(.openFloatingTerminal(cwd: nil, title: nil))
+    }
+
+    private func worktreeIdForNewTab(from pane: Pane) -> UUID? {
+        if let worktreeId = pane.worktreeId {
+            return worktreeId
+        }
+
+        return store.repoAndWorktree(containing: pane.metadata.facets.cwd)?.worktree.id
     }
 
     // MARK: - Terminal Management

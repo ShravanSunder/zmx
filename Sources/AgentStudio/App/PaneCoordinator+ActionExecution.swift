@@ -550,31 +550,7 @@ extension PaneCoordinator {
 
         case .newTerminal:
             let targetPane = store.pane(targetPaneId)
-            if let worktreeId = targetPane?.worktreeId,
-                let repoId = targetPane?.repoId,
-                let worktree = store.worktree(worktreeId),
-                let repo = store.repo(repoId)
-            {
-                let pane = store.createPane(
-                    source: .worktree(worktreeId: worktreeId, repoId: repoId),
-                    provider: .zmx,
-                    facets: targetPane?.metadata.facets ?? .empty
-                )
-
-                guard createView(for: pane, worktree: worktree, repo: repo) != nil else {
-                    Self.logger.error("Surface creation failed for new pane — rolling back pane \(pane.id)")
-                    store.removePane(pane.id)
-                    return
-                }
-
-                store.insertPane(
-                    pane.id, inTab: targetTabId, at: targetPaneId,
-                    direction: layoutDirection, position: position
-                )
-                return
-            }
-
-            if let resolved = store.repoAndWorktree(containing: targetPane?.metadata.facets.cwd) {
+            if let resolved = resolvedWorktreeContext(for: targetPane) {
                 let pane = store.createPane(
                     source: .worktree(worktreeId: resolved.worktree.id, repoId: resolved.repo.id),
                     provider: .zmx,
@@ -582,9 +558,7 @@ extension PaneCoordinator {
                 )
 
                 guard createView(for: pane, worktree: resolved.worktree, repo: resolved.repo) != nil else {
-                    Self.logger.error(
-                        "Surface creation failed for cwd-resolved pane — rolling back pane \(pane.id)"
-                    )
+                    Self.logger.error("Surface creation failed for new pane — rolling back pane \(pane.id)")
                     store.removePane(pane.id)
                     return
                 }
@@ -613,6 +587,20 @@ extension PaneCoordinator {
                 direction: layoutDirection, position: position
             )
         }
+    }
+
+    private func resolvedWorktreeContext(
+        for targetPane: Pane?
+    ) -> (repo: Repo, worktree: Worktree)? {
+        if let worktreeId = targetPane?.worktreeId,
+            let repoId = targetPane?.repoId,
+            let worktree = store.worktree(worktreeId),
+            let repo = store.repo(repoId)
+        {
+            return (repo, worktree)
+        }
+
+        return store.repoAndWorktree(containing: targetPane?.metadata.facets.cwd)
     }
 
     private func executeInsertDrawerPane(
