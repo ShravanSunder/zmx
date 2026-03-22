@@ -323,7 +323,7 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         isProcessRunning = false
         AppEventBus.post(
             .terminalProcessTerminated(
-                worktreeId: worktree?.id,
+                paneId: paneId,
                 exitCode: exitCode
             )
         )

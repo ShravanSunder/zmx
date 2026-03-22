@@ -395,31 +395,33 @@ final class AppCommandTests {
     @MainActor
 
     @Test
-    func test_dispatcher_dispatchMovePaneToTab_callsHandlerSurface() {
-        let dispatcher = CommandDispatcher.shared
-        let handler = MockCommandHandler()
-        dispatcher.handler = handler
-        dispatcher.appCommandRouter = nil
-        ManagementModeMonitor.shared.deactivate()
-        ManagementModeMonitor.shared.toggle()
-        defer {
-            dispatcher.handler = nil
+    func test_dispatcher_dispatchMovePaneToTab_callsHandlerSurface() async {
+        await withManagementModeTestLock {
+            let dispatcher = CommandDispatcher.shared
+            let handler = MockCommandHandler()
+            dispatcher.handler = handler
+            dispatcher.appCommandRouter = nil
             ManagementModeMonitor.shared.deactivate()
+            ManagementModeMonitor.shared.toggle()
+            defer {
+                dispatcher.handler = nil
+                ManagementModeMonitor.shared.deactivate()
+            }
+
+            let sourcePaneId = UUID()
+            let sourceTabId = UUID()
+            let targetTabId = UUID()
+            dispatcher.dispatchMovePaneToTab(
+                sourcePaneId: sourcePaneId,
+                sourceTabId: sourceTabId,
+                targetTabId: targetTabId
+            )
+
+            #expect(handler.movePaneRequests.count == 1)
+            #expect(handler.movePaneRequests[0].sourcePaneId == sourcePaneId)
+            #expect(handler.movePaneRequests[0].sourceTabId == sourceTabId)
+            #expect(handler.movePaneRequests[0].targetTabId == targetTabId)
         }
-
-        let sourcePaneId = UUID()
-        let sourceTabId = UUID()
-        let targetTabId = UUID()
-        dispatcher.dispatchMovePaneToTab(
-            sourcePaneId: sourcePaneId,
-            sourceTabId: sourceTabId,
-            targetTabId: targetTabId
-        )
-
-        #expect(handler.movePaneRequests.count == 1)
-        #expect(handler.movePaneRequests[0].sourcePaneId == sourcePaneId)
-        #expect(handler.movePaneRequests[0].sourceTabId == sourceTabId)
-        #expect(handler.movePaneRequests[0].targetTabId == targetTabId)
     }
 
     @MainActor
@@ -479,36 +481,40 @@ final class AppCommandTests {
     @MainActor
 
     @Test
-    func test_dispatcher_managementRequiredCommand_blockedWhenInactive() {
-        let dispatcher = CommandDispatcher.shared
-        let handler = MockCommandHandler()
-        dispatcher.handler = handler
-        ManagementModeMonitor.shared.deactivate()
-        defer {
-            dispatcher.handler = nil
+    func test_dispatcher_managementRequiredCommand_blockedWhenInactive() async {
+        await withManagementModeTestLock {
+            let dispatcher = CommandDispatcher.shared
+            let handler = MockCommandHandler()
+            dispatcher.handler = handler
             ManagementModeMonitor.shared.deactivate()
-        }
+            defer {
+                dispatcher.handler = nil
+                ManagementModeMonitor.shared.deactivate()
+            }
 
-        #expect(!dispatcher.canDispatch(.closePane))
-        #expect(!dispatcher.canDispatch(.movePaneToTab))
+            #expect(!dispatcher.canDispatch(.closePane))
+            #expect(!dispatcher.canDispatch(.movePaneToTab))
+        }
     }
 
     @MainActor
 
     @Test
-    func test_dispatcher_managementRequiredCommand_allowedWhenActive() {
-        let dispatcher = CommandDispatcher.shared
-        let handler = MockCommandHandler()
-        dispatcher.handler = handler
-        ManagementModeMonitor.shared.deactivate()
-        ManagementModeMonitor.shared.toggle()
-        defer {
-            dispatcher.handler = nil
+    func test_dispatcher_managementRequiredCommand_allowedWhenActive() async {
+        await withManagementModeTestLock {
+            let dispatcher = CommandDispatcher.shared
+            let handler = MockCommandHandler()
+            dispatcher.handler = handler
             ManagementModeMonitor.shared.deactivate()
-        }
+            ManagementModeMonitor.shared.toggle()
+            defer {
+                dispatcher.handler = nil
+                ManagementModeMonitor.shared.deactivate()
+            }
 
-        #expect(dispatcher.canDispatch(.closePane))
-        #expect(dispatcher.canDispatch(.movePaneToTab))
+            #expect(dispatcher.canDispatch(.closePane))
+            #expect(dispatcher.canDispatch(.movePaneToTab))
+        }
     }
 
     // MARK: - Sidebar Commands

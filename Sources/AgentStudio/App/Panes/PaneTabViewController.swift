@@ -300,8 +300,11 @@ class PaneTabViewController: NSViewController, CommandHandler {
                 for await event in stream {
                     guard !Task.isCancelled else { break }
                     switch event {
-                    case .terminalProcessTerminated(let worktreeId, _):
-                        self.handleProcessTerminated(worktreeId: worktreeId)
+                    case .terminalProcessTerminated(let paneId, _):
+                        Task { @MainActor [weak self] in
+                            await Task.yield()
+                            self?.handleTerminalProcessTerminated(paneId: paneId)
+                        }
                     default:
                         continue
                     }
@@ -341,11 +344,6 @@ class PaneTabViewController: NSViewController, CommandHandler {
     private func handleAppKitStateChange() {
         updateEmptyState()
         reconcileRestoreHostReadinessIfNeeded(reason: "appKitStateChange")
-
-        // Deactivate management mode if no tabs
-        if store.tabs.isEmpty && ManagementModeMonitor.shared.isActive {
-            ManagementModeMonitor.shared.deactivate()
-        }
 
         let isManagementModeActive = ManagementModeMonitor.shared.isActive
         if lastManagementModeActive && !isManagementModeActive {
@@ -852,9 +850,20 @@ class PaneTabViewController: NSViewController, CommandHandler {
 
     // MARK: - Process Termination
 
-    private func handleProcessTerminated(worktreeId: UUID?) {
-        guard let worktreeId else { return }
-        closeTerminal(for: worktreeId)
+    func handleTerminalProcessTerminated(paneId: UUID) {
+        if let tab = store.tabs.first(where: { $0.paneIds.contains(paneId) }) {
+            if tab.isSplit {
+                dispatchAction(.closePane(tabId: tab.id, paneId: paneId))
+            } else {
+                dispatchAction(.closeTab(tabId: tab.id))
+            }
+            return
+        }
+
+        guard store.pane(paneId) != nil else { return }
+        RestoreTrace.log(
+            "PaneTabViewController.handleTerminalProcessTerminated deferredNoop pane=\(paneId) reason=notInAnyTab"
+        )
     }
 
     private func handleExtractPaneRequested(tabId: UUID, paneId: UUID, targetTabIndex: Int?) {

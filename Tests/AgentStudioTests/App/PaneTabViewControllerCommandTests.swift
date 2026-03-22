@@ -112,6 +112,69 @@ struct PaneTabViewControllerCommandTests {
         #expect(harness.surfaceManager.createSurfaceCallCount == 1)
         #expect(harness.surfaceManager.lastCreatedSurfaceMetadata?.workingDirectory == unknownCwd)
     }
+
+    @Test("terminated pane closes only the matching split pane")
+    func handleTerminalProcessTerminated_closesOnlyMatchingSplitPane() {
+        let harness = makeHarness()
+        defer { try? FileManager.default.removeItem(at: harness.tempDir) }
+
+        let (repo, worktree) = makeRepoAndWorktree(harness.store, root: harness.tempDir)
+        let primaryPane = harness.store.createPane(
+            source: .worktree(worktreeId: worktree.id, repoId: repo.id),
+            title: "Primary",
+            provider: .zmx
+        )
+        let terminatingPane = harness.store.createPane(
+            source: .worktree(worktreeId: worktree.id, repoId: repo.id),
+            title: "Terminating",
+            provider: .zmx
+        )
+        let tab = Tab(paneId: primaryPane.id)
+        harness.store.appendTab(tab)
+        harness.store.insertPane(
+            terminatingPane.id,
+            inTab: tab.id,
+            at: primaryPane.id,
+            direction: .horizontal,
+            position: .after
+        )
+
+        harness.controller.handleTerminalProcessTerminated(paneId: terminatingPane.id)
+
+        #expect(harness.store.tab(tab.id)?.paneIds == [primaryPane.id])
+        #expect(harness.store.pane(primaryPane.id) != nil)
+        #expect(harness.store.pane(terminatingPane.id) == nil)
+    }
+
+    @Test("terminated pane closes only the matching tab when multiple tabs share a worktree")
+    func handleTerminalProcessTerminated_closesOnlyMatchingTab() {
+        let harness = makeHarness()
+        defer { try? FileManager.default.removeItem(at: harness.tempDir) }
+
+        let (repo, worktree) = makeRepoAndWorktree(harness.store, root: harness.tempDir)
+        let survivingPane = harness.store.createPane(
+            source: .worktree(worktreeId: worktree.id, repoId: repo.id),
+            title: "Surviving",
+            provider: .zmx
+        )
+        let terminatingPane = harness.store.createPane(
+            source: .worktree(worktreeId: worktree.id, repoId: repo.id),
+            title: "Terminating",
+            provider: .zmx
+        )
+        let survivingTab = Tab(paneId: survivingPane.id, name: "Surviving")
+        let terminatingTab = Tab(paneId: terminatingPane.id, name: "Terminating")
+        harness.store.appendTab(survivingTab)
+        harness.store.appendTab(terminatingTab)
+        harness.store.setActiveTab(terminatingTab.id)
+
+        harness.controller.handleTerminalProcessTerminated(paneId: terminatingPane.id)
+
+        #expect(harness.store.tab(survivingTab.id) != nil)
+        #expect(harness.store.tab(terminatingTab.id) == nil)
+        #expect(harness.store.pane(survivingPane.id) != nil)
+    }
+
 }
 
 private final class MockPaneTabCommandSurfaceManager: PaneCoordinatorSurfaceManaging {

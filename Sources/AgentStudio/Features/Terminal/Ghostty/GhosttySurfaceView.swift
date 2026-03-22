@@ -91,7 +91,15 @@ extension Ghostty {
         private(set) var pwd: String? {
             didSet {
                 if pwd != oldValue {
-                    onWorkingDirectoryChanged?(ObjectIdentifier(self), pwd)
+                    let surfaceViewId = ObjectIdentifier(self)
+                    let updatedPwd = pwd
+                    RestoreTrace.log(
+                        "Ghostty.SurfaceView.scheduleWorkingDirectoryChanged view=\(surfaceViewId) mainThread=\(Thread.isMainThread)"
+                    )
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.onWorkingDirectoryChanged?(surfaceViewId, updatedPwd)
+                    }
                 }
             }
         }
@@ -100,7 +108,15 @@ extension Ghostty {
         private(set) var healthy: Bool = true {
             didSet {
                 if healthy != oldValue {
-                    onRendererHealthChanged?(ObjectIdentifier(self), healthy)
+                    let surfaceViewId = ObjectIdentifier(self)
+                    let updatedHealth = healthy
+                    RestoreTrace.log(
+                        "Ghostty.SurfaceView.scheduleRendererHealthChanged view=\(surfaceViewId) healthy=\(updatedHealth) mainThread=\(Thread.isMainThread)"
+                    )
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.onRendererHealthChanged?(surfaceViewId, updatedHealth)
+                    }
                 }
             }
         }
@@ -240,7 +256,13 @@ extension Ghostty {
         }
 
         func handleCloseRequested(processAlive: Bool) {
-            onCloseRequested?(processAlive)
+            RestoreTrace.log(
+                "Ghostty.SurfaceView.scheduleCloseRequested processAlive=\(processAlive) mainThread=\(Thread.isMainThread)"
+            )
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.onCloseRequested?(processAlive)
+            }
         }
 
         // MARK: - View Lifecycle
