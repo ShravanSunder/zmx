@@ -157,29 +157,24 @@ struct WebviewPaneControllerTests {
 
     @Test
     func test_managementModeToggle_updatesWebviewControllerInteractionState() async {
-        // Arrange
-        await setManagementMode(active: false)
-        let paneView = WebviewPaneView(
-            paneId: UUIDv7.generate(),
-            state: WebviewState(url: URL(string: "about:blank")!)
-        )
-        _ = paneView.swiftUIContainer
-        await settleEventLoop()
-        #expect(paneView.controller.isContentInteractionEnabled)
+        await withManagementModeTestLock {
+            await setManagementMode(active: false)
+            let paneView = WebviewPaneView(
+                paneId: UUIDv7.generate(),
+                state: WebviewState(url: URL(string: "about:blank")!)
+            )
+            _ = paneView.swiftUIContainer
+            await settleEventLoop()
+            #expect(paneView.controller.isContentInteractionEnabled)
 
-        // Act — enter management mode
-        await setManagementMode(active: true)
+            await setManagementMode(active: true)
+            #expect(ManagementModeMonitor.shared.isActive)
+            #expect(!paneView.controller.isContentInteractionEnabled)
 
-        // Assert
-        #expect(ManagementModeMonitor.shared.isActive)
-        #expect(!paneView.controller.isContentInteractionEnabled)
-
-        // Act — leave management mode
-        await setManagementMode(active: false)
-
-        // Assert
-        #expect(!ManagementModeMonitor.shared.isActive)
-        #expect(paneView.controller.isContentInteractionEnabled)
+            await setManagementMode(active: false)
+            #expect(!ManagementModeMonitor.shared.isActive)
+            #expect(paneView.controller.isContentInteractionEnabled)
+        }
     }
 
     @Test

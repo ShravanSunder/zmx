@@ -51,6 +51,7 @@ extension E2ESerializedTests {
                 scopeSyncHandler: { _ in }
             )
             cacheCoordinator.startConsuming()
+            await filesystemSource.start()
 
             let coordinator = PaneCoordinator(
                 store: store,
