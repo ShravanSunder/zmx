@@ -10,16 +10,8 @@
 #   EXTRA_SWIFT_TEST_ARGS - Additional swift test flags (e.g. "--enable-code-coverage")
 #   XCB_EXTRA_ARGS        - Extra xcbeautify flags (e.g. "--renderer github-actions")
 
-set -o pipefail
-
-_xcb_pipe_cmd() {
-  if command -v xcbeautify >/dev/null 2>&1; then
-    # shellcheck disable=SC2086
-    echo "xcbeautify"${XCB_EXTRA_ARGS:+ $XCB_EXTRA_ARGS}
-  else
-    echo "cat"
-  fi
-}
+# shellcheck source=scripts/xcb-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/xcb-helpers.sh"
 
 prebuild_swift_tests() {
   echo "[$LOG_PREFIX] >>> prebuild test bundles"
@@ -95,8 +87,9 @@ run_webkit_suite_with_retry() {
     echo "[webkit] running $filter (attempt $attempt/$max_attempts)"
     set +e
     local output
+    # Bypass xcbeautify — we need raw output to detect "unexpected signal code" for retries.
     # shellcheck disable=SC2086
-    output=$(run_swift_with_timeout "$filter" "$TIMEOUT_SECONDS" \
+    _XCB_BYPASS=1 output=$(run_swift_with_timeout "$filter" "$TIMEOUT_SECONDS" \
       env AGENT_STUDIO_BENCHMARK_MODE=off swift test ${EXTRA_SWIFT_TEST_ARGS:-} \
       --skip-build --filter "$filter" --build-path "$BUILD_PATH" 2>&1)
     local command_status=$?

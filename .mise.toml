@@ -116,6 +116,7 @@ description = "Debug build (run mise run setup first time)"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
+source scripts/xcb-helpers.sh
 RUN_ID="${AGENT_RUN_ID:-}"
 if [ -z "$RUN_ID" ]; then
   echo "[build] ERROR: AGENT_RUN_ID is required (example: AGENT_RUN_ID=abc123 mise run build)"
@@ -123,11 +124,8 @@ if [ -z "$RUN_ID" ]; then
 fi
 BUILD_PATH="${SWIFT_BUILD_DIR:-.build-agent-$RUN_ID}"
 echo "[build] BUILD_PATH=$BUILD_PATH"
-if command -v xcbeautify >/dev/null 2>&1; then
-  swift build --build-path "$BUILD_PATH" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-else
-  swift build --build-path "$BUILD_PATH"
-fi
+xcb_pipe=$(_xcb_pipe_cmd)
+swift build --build-path "$BUILD_PATH" 2>&1 | $xcb_pipe
 """
 
 [tasks.build-release]
@@ -135,6 +133,7 @@ description = "Release build (run mise run setup first time)"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
+source scripts/xcb-helpers.sh
 RUN_ID="${AGENT_RUN_ID:-}"
 if [ -z "$RUN_ID" ]; then
   echo "[build-release] ERROR: AGENT_RUN_ID is required (example: AGENT_RUN_ID=abc123 mise run build-release)"
@@ -142,11 +141,8 @@ if [ -z "$RUN_ID" ]; then
 fi
 BUILD_PATH="${SWIFT_BUILD_DIR:-.build-release-agent-$RUN_ID}"
 echo "[build-release] BUILD_PATH=$BUILD_PATH"
-if command -v xcbeautify >/dev/null 2>&1; then
-  swift build -c release --build-path "$BUILD_PATH" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-else
-  swift build -c release --build-path "$BUILD_PATH"
-fi
+xcb_pipe=$(_xcb_pipe_cmd)
+swift build -c release --build-path "$BUILD_PATH" 2>&1 | $xcb_pipe
 """
 
 [tasks.test]
@@ -297,14 +293,11 @@ description = "Run E2E serialized tests only (opt-in; zmx E2E currently unstable
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
+source scripts/xcb-helpers.sh
 BUILD_PATH="${SWIFT_BUILD_DIR:-.build}"
-if command -v xcbeautify >/dev/null 2>&1; then
-  swift build --build-tests --build-path "$BUILD_PATH" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-  AGENT_STUDIO_BENCHMARK_MODE=off swift test --skip-build --filter E2ESerializedTests --build-path "$BUILD_PATH" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-else
-  swift build --build-tests --build-path "$BUILD_PATH"
-  AGENT_STUDIO_BENCHMARK_MODE=off swift test --skip-build --filter E2ESerializedTests --build-path "$BUILD_PATH"
-fi
+xcb_pipe=$(_xcb_pipe_cmd)
+swift build --build-tests --build-path "$BUILD_PATH" 2>&1 | $xcb_pipe
+AGENT_STUDIO_BENCHMARK_MODE=off swift test --skip-build --filter E2ESerializedTests --build-path "$BUILD_PATH" 2>&1 | $xcb_pipe
 """
 
 [tasks.test-zmx-e2e]
@@ -312,14 +305,11 @@ description = "Run zmx E2E tests only (opt-in; may stall)"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
+source scripts/xcb-helpers.sh
 BUILD_PATH="${SWIFT_BUILD_DIR:-.build}"
-if command -v xcbeautify >/dev/null 2>&1; then
-  swift build --build-tests --build-path "$BUILD_PATH" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-  AGENT_STUDIO_BENCHMARK_MODE=off swift test --skip-build --filter ZmxE2ETests --build-path "$BUILD_PATH" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-else
-  swift build --build-tests --build-path "$BUILD_PATH"
-  AGENT_STUDIO_BENCHMARK_MODE=off swift test --skip-build --filter ZmxE2ETests --build-path "$BUILD_PATH"
-fi
+xcb_pipe=$(_xcb_pipe_cmd)
+swift build --build-tests --build-path "$BUILD_PATH" 2>&1 | $xcb_pipe
+AGENT_STUDIO_BENCHMARK_MODE=off swift test --skip-build --filter ZmxE2ETests --build-path "$BUILD_PATH" 2>&1 | $xcb_pipe
 """
 
 [tasks.test-benchmark]
@@ -328,6 +318,7 @@ depends = ["build"]
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
+source scripts/xcb-helpers.sh
 RUN_ID="${AGENT_RUN_ID:-}"
 if [ -z "$RUN_ID" ]; then
   echo "[test-benchmark] ERROR: AGENT_RUN_ID is required (example: AGENT_RUN_ID=abc123 mise run test-benchmark)"
@@ -335,14 +326,9 @@ if [ -z "$RUN_ID" ]; then
 fi
 BUILD_PATH="${SWIFT_BUILD_DIR:-.build-agent-$RUN_ID}"
 export AGENT_STUDIO_BENCHMARK_MODE=benchmark
-
-if command -v xcbeautify >/dev/null 2>&1; then
-  swift test --build-path "$BUILD_PATH" --filter "PushBenchmarkSupportTests" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-  swift test --build-path "$BUILD_PATH" --filter "PushPerformanceBenchmarkTests" 2>&1 | xcbeautify ${XCB_EXTRA_ARGS:-}
-else
-  swift test --build-path "$BUILD_PATH" --filter "PushBenchmarkSupportTests"
-  swift test --build-path "$BUILD_PATH" --filter "PushPerformanceBenchmarkTests"
-fi
+xcb_pipe=$(_xcb_pipe_cmd)
+swift test --build-path "$BUILD_PATH" --filter "PushBenchmarkSupportTests" 2>&1 | $xcb_pipe
+swift test --build-path "$BUILD_PATH" --filter "PushPerformanceBenchmarkTests" 2>&1 | $xcb_pipe
 """
 
 [tasks.clean]
