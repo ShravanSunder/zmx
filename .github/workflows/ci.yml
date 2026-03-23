@@ -16,6 +16,7 @@ jobs:
     runs-on: macos-26
     env:
       AGENT_RUN_ID: ci
+      SWIFT_BUILD_DIR: .build-ci
 
     steps:
       - name: Checkout
@@ -129,13 +130,10 @@ jobs:
       - name: Cache Swift build
         uses: actions/cache@v4
         with:
-          path: .build
+          path: .build-ci
           key: swift-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
             swift-${{ runner.os }}-
-
-      - name: Build
-        run: mise run build-release
 
       - name: Test
         env:
