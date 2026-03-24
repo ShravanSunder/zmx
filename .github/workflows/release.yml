@@ -191,12 +191,14 @@ jobs:
             echo "Signing with: $SIGNING_IDENTITY"
 
             # Sign any embedded dylibs or frameworks (inside-out)
-            find "$APP/Contents/Frameworks" -type d -name "*.framework" -print0 2>/dev/null | while IFS= read -r -d '' item; do
-              codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime "$item"
-            done
-            find "$APP/Contents/Frameworks" -type f -name "*.dylib" -print0 2>/dev/null | while IFS= read -r -d '' item; do
-              codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime "$item"
-            done
+            if [ -d "$APP/Contents/Frameworks" ]; then
+              find "$APP/Contents/Frameworks" -type d -name "*.framework" -print0 | while IFS= read -r -d '' item; do
+                codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime "$item"
+              done
+              find "$APP/Contents/Frameworks" -type f -name "*.dylib" -print0 | while IFS= read -r -d '' item; do
+                codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime "$item"
+              done
+            fi
 
             # Sign zmx helper binary
             if [ -f "$APP/Contents/MacOS/zmx" ]; then
