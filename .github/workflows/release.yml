@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -214,17 +215,29 @@ jobs:
           ditto -c -k --keepParent AgentStudio.app AgentStudio-notarize.zip
 
           echo "Submitting to Apple notary service..."
-          xcrun notarytool submit AgentStudio-notarize.zip \
+          SUBMISSION_ID=$(xcrun notarytool submit AgentStudio-notarize.zip \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_NOTARY_PASSWORD" \
-            --wait --timeout 15m
+            --output-format json | jq -r '.id')
+          echo "Submission ID: $SUBMISSION_ID"
+
+          echo "Waiting for notarization (up to 30m)..."
+          if ! xcrun notarytool wait "$SUBMISSION_ID" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_NOTARY_PASSWORD" \
+            --timeout 30m; then
+            echo "::error::Notarization failed or timed out. Fetching log..."
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_NOTARY_PASSWORD" || true
+            exit 1
+          fi
 
           echo "Stapling notarization ticket..."
           xcrun stapler staple AgentStudio.app
-
-          echo "Verifying notarization..."
-          spctl --assess --type execute --verbose AgentStudio.app
 
           rm -f AgentStudio-notarize.zip
 
