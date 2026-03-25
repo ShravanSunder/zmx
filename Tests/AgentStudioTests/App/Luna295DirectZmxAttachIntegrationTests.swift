@@ -335,10 +335,6 @@ struct Luna295DirectZmxAttachIntegrationTests {
             sessionConfiguration: customConfig,
             liveSessionIdsProvider: { _ in [] }
         )
-        harness.windowLifecycleStore.recordTerminalContainerBounds(
-            CGRect(x: 0, y: 0, width: 1000, height: 600)
-        )
-
         harness.windowLifecycleStore.recordTerminalContainerBounds(trustedBounds)
         await harness.coordinator.restoreAllViews(in: trustedBounds)
         #expect(harness.surfaceManager.createdPaneIds == [visiblePane.id])
@@ -585,6 +581,51 @@ struct Luna295DirectZmxAttachIntegrationTests {
         #expect(config.initialFrame != nil)
         #expect(config.initialFrame != CGRect(x: 0, y: 0, width: 800, height: 600))
         #expect(config.initialFrame == resolvedFrames[pane.id])
+    }
+
+    @Test
+    func openNewTerminalTab_defersSurfaceCreation_untilBoundsExist_thenCreatesWithTrustedFrame() throws {
+        let harness = makeHarness()
+        defer { try? FileManager.default.removeItem(at: harness.tempDir) }
+
+        let repo = harness.store.addRepo(at: harness.tempDir)
+        let worktree = try #require(repo.worktrees.first)
+
+        let pane = try #require(harness.coordinator.openNewTerminal(for: worktree, in: repo))
+        #expect(harness.surfaceManager.createdConfigsByPaneId[pane.id] == nil)
+
+        harness.windowLifecycleStore.recordTerminalContainerBounds(trustedBounds)
+        harness.coordinator.restoreViewsForActiveTabIfNeeded()
+
+        let config = try #require(harness.surfaceManager.createdConfigsByPaneId[pane.id])
+        let activeTab = try #require(harness.store.activeTab)
+        let resolvedFrames = TerminalPaneGeometryResolver.resolveFrames(
+            for: activeTab.layout,
+            in: harness.windowLifecycleStore.terminalContainerBounds,
+            dividerThickness: AppStyle.paneGap,
+            minimizedPaneIds: activeTab.minimizedPaneIds
+        )
+
+        #expect(config.initialFrame == resolvedFrames[pane.id])
+    }
+
+    @Test
+    func createViewForContentUsingCurrentGeometry_withoutBounds_returnsNil_andDoesNotReachSurfaceManager() throws {
+        let harness = makeHarness()
+        defer { try? FileManager.default.removeItem(at: harness.tempDir) }
+
+        let repo = harness.store.addRepo(at: harness.tempDir)
+        let worktree = try #require(repo.worktrees.first)
+        let pane = harness.store.createPane(
+            source: .worktree(worktreeId: worktree.id, repoId: repo.id),
+            provider: .zmx
+        )
+
+        let view = harness.coordinator.createViewForContentUsingCurrentGeometry(pane: pane)
+
+        #expect(view == nil)
+        #expect(harness.surfaceManager.lastConfig == nil)
+        #expect(harness.surfaceManager.createdPaneIds.isEmpty)
     }
 }
 

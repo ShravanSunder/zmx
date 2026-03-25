@@ -60,6 +60,21 @@ struct WindowRestoreBridgeTests {
         #expect(yieldedBounds == readyBounds)
         #expect(await iterator.next() == nil)
     }
+
+    @Test("stream yields when launch settles before bounds arrive")
+    func test_windowRestoreBridge_streamYieldsWhenBoundsArriveAfterSettled() async throws {
+        let store = WindowLifecycleStore()
+        let bridge = WindowRestoreBridge(windowLifecycleStore: store)
+        var iterator = bridge.stream.makeAsyncIterator()
+        let readyBounds = CGRect(x: 0, y: 0, width: 1140, height: 824)
+
+        store.recordLaunchLayoutSettled()
+        store.recordTerminalContainerBounds(readyBounds)
+
+        let yieldedBounds = try #require(await iterator.next())
+        #expect(yieldedBounds == readyBounds)
+        #expect(await iterator.next() == nil)
+    }
 }
 
 private actor BridgeYieldProbe {

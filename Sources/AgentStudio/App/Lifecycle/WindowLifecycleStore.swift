@@ -39,6 +39,7 @@ final class WindowLifecycleStore {
     }
 
     func recordTerminalContainerBounds(_ bounds: CGRect) {
+        guard !bounds.isEmpty else { return }
         terminalContainerBounds = bounds
     }
 

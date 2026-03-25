@@ -123,6 +123,8 @@ extension PaneCoordinator {
     }
 
     @discardableResult
+    /// Create a pane view using the current trusted terminal container bounds.
+    /// Returns nil when bounds are unavailable or when pane-specific frame resolution fails.
     func createViewForContentUsingCurrentGeometry(
         pane: Pane,
         treatAsRestoredSessionStart: Bool = false
@@ -758,6 +760,7 @@ extension PaneCoordinator {
             RestoreTrace.log("restoreViewsForActiveTabIfNeeded skipped boundsUnavailable")
             return
         }
+        guard activeTabHasMissingVisibleView(activeTab) else { return }
         RestoreTrace.log(
             "restoreViewsForActiveTabIfNeeded activeTab=\(activeTab.id) bounds=\(NSStringFromRect(terminalContainerBounds))"
         )
@@ -788,6 +791,26 @@ extension PaneCoordinator {
         if createdAnyViews {
             store.bumpViewRevision()
         }
+    }
+
+    private func activeTabHasMissingVisibleView(_ activeTab: Tab) -> Bool {
+        let visiblePaneIds = TerminalRestoreScheduler.order(
+            store.panes.keys.map(PaneId.init(uuid:)),
+            resolver: visibilityTierResolver
+        )
+        .filter { visibilityTierResolver.tier(for: $0) == .p0Visible }
+        .map(\.uuid)
+
+        for paneId in visiblePaneIds {
+            guard let pane = store.pane(paneId) else { continue }
+            guard store.tabContaining(paneId: pane.parentPaneId ?? pane.id)?.id == activeTab.id else {
+                continue
+            }
+            if viewRegistry.view(for: paneId) == nil {
+                return true
+            }
+        }
+        return false
     }
 
     private func restoreDrawerPanes(

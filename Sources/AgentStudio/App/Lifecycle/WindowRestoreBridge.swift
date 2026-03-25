@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os.log
 
 /// Bridges `WindowLifecycleStore` launch-restore readiness into a one-shot async signal.
 /// It observes the store using the repo's explicit observation re-registration pattern,
@@ -8,6 +9,8 @@ import Observation
 
 @MainActor
 final class WindowRestoreBridge {
+    private static let logger = Logger(subsystem: "com.agentstudio", category: "WindowRestoreBridge")
+
     let stream: AsyncStream<CGRect>
 
     private let continuation: AsyncStream<CGRect>.Continuation
@@ -33,8 +36,9 @@ final class WindowRestoreBridge {
             _ = windowLifecycleStore.terminalContainerBounds
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
-                self?.publishIfReady()
-                self?.registerObservation()
+                guard let self, !self.hasFinished else { return }
+                self.publishIfReady()
+                self.registerObservation()
             }
         }
     }
@@ -50,7 +54,7 @@ final class WindowRestoreBridge {
 
     isolated deinit {
         if !hasFinished {
-            RestoreTrace.log("WindowRestoreBridge deallocated before readiness")
+            Self.logger.error("WindowRestoreBridge deallocated before readiness")
         }
         continuation.finish()
     }

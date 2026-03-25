@@ -275,8 +275,7 @@ extension PaneCoordinator {
                 direction: layoutDirection,
                 position: position
             )
-            if viewRegistry.view(for: paneId) == nil, let pane = store.pane(paneId) {
-                _ = pane
+            if viewRegistry.view(for: paneId) == nil, store.pane(paneId) != nil {
                 restoreViewsForActiveTabIfNeeded()
             }
 
@@ -286,8 +285,7 @@ extension PaneCoordinator {
             store.purgeOrphanedPane(paneId)
 
         case .addDrawerPane(let parentPaneId):
-            if let drawerPane = store.addDrawerPane(to: parentPaneId) {
-                _ = drawerPane
+            if store.addDrawerPane(to: parentPaneId) != nil {
                 restoreViewsForActiveTabIfNeeded()
             }
 
@@ -595,7 +593,6 @@ extension PaneCoordinator {
             return
         }
 
-        _ = drawerPane
         restoreViewsForActiveTabIfNeeded()
     }
 
@@ -653,16 +650,13 @@ extension PaneCoordinator {
         }
     }
 
+    /// Recreate a pane view during repair while preserving geometry requirements for terminals.
+    /// Terminal panes must use trusted current geometry; non-terminal panes can be recreated directly.
     private func createViewForRepair(for pane: Pane) -> PaneView? {
         if case .terminal = pane.content {
             return createViewForContentUsingCurrentGeometry(pane: pane)
         }
         return createViewForContent(pane: pane)
-    }
-
-    private func rollbackDrawerPaneCreation(_ drawerPaneId: UUID, from parentPaneId: UUID) {
-        teardownView(for: drawerPaneId)
-        store.removeDrawerPane(drawerPaneId, from: parentPaneId)
     }
 
     /// Teardown views for all drawer panes owned by a parent pane.
