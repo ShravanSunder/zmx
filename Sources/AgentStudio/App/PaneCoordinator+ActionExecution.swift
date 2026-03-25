@@ -625,13 +625,7 @@ extension PaneCoordinator {
                 return
             }
             teardownView(for: paneId, shouldUnregisterRuntime: false)
-            let recreatedView: PaneView?
-            if case .terminal = pane.content {
-                recreatedView = createViewForContentUsingCurrentGeometry(pane: pane)
-            } else {
-                recreatedView = createViewForContent(pane: pane)
-            }
-            guard recreatedView != nil else {
+            guard createViewForRepair(for: pane) != nil else {
                 Self.logger.error("repair recreateSurface failed for pane \(paneId)")
                 return
             }
@@ -647,13 +641,7 @@ extension PaneCoordinator {
                 Self.logger.info("repair createMissingView: pane \(paneId) already has a view")
                 return
             }
-            let recreatedView: PaneView?
-            if case .terminal = pane.content {
-                recreatedView = createViewForContentUsingCurrentGeometry(pane: pane)
-            } else {
-                recreatedView = createViewForContent(pane: pane)
-            }
-            guard recreatedView != nil else {
+            guard createViewForRepair(for: pane) != nil else {
                 Self.logger.error("repair createMissingView failed for pane \(paneId)")
                 return
             }
@@ -663,6 +651,13 @@ extension PaneCoordinator {
         case .reattachZmx, .markSessionFailed, .cleanupOrphan:
             Self.logger.warning("repair: \(String(describing: repairAction)) — not yet implemented")
         }
+    }
+
+    private func createViewForRepair(for pane: Pane) -> PaneView? {
+        if case .terminal = pane.content {
+            return createViewForContentUsingCurrentGeometry(pane: pane)
+        }
+        return createViewForContent(pane: pane)
     }
 
     private func rollbackDrawerPaneCreation(_ drawerPaneId: UUID, from parentPaneId: UUID) {
