@@ -21,18 +21,22 @@ struct TerminalPaneGeometryResolverTests {
             )
         )
 
+        let containerWidth: CGFloat = 1000
+        let containerHeight: CGFloat = 600
+        let divider: CGFloat = 1
         let resolved = TerminalPaneGeometryResolver.resolveFrames(
             for: layout,
-            in: CGRect(x: 0, y: 0, width: 1000, height: 600),
-            dividerThickness: 1
+            in: CGRect(x: 0, y: 0, width: containerWidth, height: containerHeight),
+            dividerThickness: divider
         )
 
         let gap = AppStyle.paneGap
-        let paneWidth = (1000.0 - 1) / 2 - gap * 2
-        let paneHeight = 600.0 - gap * 2
+        let rawSplitWidth = (containerWidth - divider) / 2
+        let paneWidth = rawSplitWidth - gap * 2
+        let paneHeight = containerHeight - gap * 2
         #expect(resolved[paneA] == CGRect(x: gap, y: gap, width: paneWidth, height: paneHeight))
-        #expect(
-            resolved[paneB] == CGRect(x: gap + paneWidth + gap + 1 + gap, y: gap, width: paneWidth, height: paneHeight))
+        let paneBx = rawSplitWidth + divider + gap
+        #expect(resolved[paneB] == CGRect(x: paneBx, y: gap, width: paneWidth, height: paneHeight))
     }
 
     @Test
