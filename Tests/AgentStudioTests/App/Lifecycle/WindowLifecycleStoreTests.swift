@@ -42,6 +42,17 @@ struct WindowLifecycleStoreTests {
         #expect(store.isReadyForLaunchRestore == false)
     }
 
+    @Test("recordTerminalContainerBounds ignores empty bounds")
+    func test_recordTerminalContainerBounds_ignoresEmptyBounds() {
+        let store = WindowLifecycleStore()
+        let bounds = CGRect(x: 0, y: 0, width: 1140, height: 824)
+
+        store.recordTerminalContainerBounds(bounds)
+        store.recordTerminalContainerBounds(.zero)
+
+        #expect(store.terminalContainerBounds == bounds)
+    }
+
     @Test("recordLaunchLayoutSettled transitions to true")
     func test_recordLaunchLayoutSettled_transitionsToTrue() {
         let store = WindowLifecycleStore()

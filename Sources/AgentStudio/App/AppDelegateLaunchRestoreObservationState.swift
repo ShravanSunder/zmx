@@ -17,6 +17,7 @@ final class AppDelegateLaunchRestoreObservationState {
     }
 
     func complete() {
+        guard !didComplete else { return }
         didComplete = true
         diagnosticTask?.cancel()
         diagnosticTask = nil

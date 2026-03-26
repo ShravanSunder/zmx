@@ -122,6 +122,29 @@ extension PaneCoordinator {
         }
     }
 
+    @discardableResult
+    /// Create a pane view using the current trusted terminal container bounds.
+    /// Returns nil when bounds are unavailable or when pane-specific frame resolution fails.
+    func createViewForContentUsingCurrentGeometry(
+        pane: Pane,
+        treatAsRestoredSessionStart: Bool = false
+    ) -> PaneView? {
+        let terminalContainerBounds = windowLifecycleStore.terminalContainerBounds
+        guard !terminalContainerBounds.isEmpty else {
+            RestoreTrace.log(
+                "createViewForContentUsingCurrentGeometry deferred pane=\(pane.id) reason=emptyBounds"
+            )
+            return nil
+        }
+
+        let resolvedPaneFramesByTabId = resolveInitialFramesByTabId(in: terminalContainerBounds)
+        return createViewForContent(
+            pane: pane,
+            initialFrame: initialFrame(for: pane, resolvedPaneFramesByTabId: resolvedPaneFramesByTabId),
+            treatAsRestoredSessionStart: treatAsRestoredSessionStart
+        )
+    }
+
     /// Create a terminal view for a pane, including surface and runtime setup.
     /// Registers the view in the ViewRegistry.
     @discardableResult
@@ -132,6 +155,13 @@ extension PaneCoordinator {
         initialFrame: NSRect? = nil,
         treatAsRestoredSessionStart: Bool = false
     ) -> AgentStudioTerminalView? {
+        if pane.provider == .zmx, initialFrame == nil {
+            assertionFailure("zmx pane \(pane.id) must provide trusted initialFrame before Ghostty surface creation")
+            Self.logger.error(
+                "Refusing to create zmx pane \(pane.id, privacy: .public) without trusted initialFrame"
+            )
+            return nil
+        }
         let workingDir = pane.metadata.facets.cwd ?? worktree.path
 
         let shellCommand = "\(getDefaultShell()) -i -l"
@@ -232,6 +262,14 @@ extension PaneCoordinator {
         initialFrame: NSRect? = nil,
         treatAsRestoredSessionStart: Bool = false
     ) -> AgentStudioTerminalView? {
+        if pane.provider == .zmx, initialFrame == nil {
+            assertionFailure(
+                "floating zmx pane \(pane.id) must provide trusted initialFrame before Ghostty surface creation")
+            Self.logger.error(
+                "Refusing to create floating zmx pane \(pane.id, privacy: .public) without trusted initialFrame"
+            )
+            return nil
+        }
         let workingDir = pane.metadata.facets.cwd ?? FileManager.default.homeDirectoryForCurrentUser
         let shellCommand = "\(getDefaultShell()) -i -l"
         let startupStrategy: Ghostty.SurfaceStartupStrategy
@@ -516,12 +554,11 @@ extension PaneCoordinator {
         }
 
         Self.logger.info("Creating fresh view for pane \(pane.id)")
-        let restoredView = createView(
-            for: pane,
-            worktree: worktree,
-            repo: repo,
-            treatAsRestoredSessionStart: true
-        )
+        let restoredView =
+            createViewForContentUsingCurrentGeometry(
+                pane: pane,
+                treatAsRestoredSessionStart: true
+            ) as? AgentStudioTerminalView
         if restoredView == nil, !runtimeWasAlreadyRegistered {
             _ = unregisterRuntime(runtimePaneId)
         }
@@ -723,6 +760,7 @@ extension PaneCoordinator {
             RestoreTrace.log("restoreViewsForActiveTabIfNeeded skipped boundsUnavailable")
             return
         }
+        guard activeTabHasMissingVisibleView(activeTab) else { return }
         RestoreTrace.log(
             "restoreViewsForActiveTabIfNeeded activeTab=\(activeTab.id) bounds=\(NSStringFromRect(terminalContainerBounds))"
         )
@@ -753,6 +791,26 @@ extension PaneCoordinator {
         if createdAnyViews {
             store.bumpViewRevision()
         }
+    }
+
+    private func activeTabHasMissingVisibleView(_ activeTab: Tab) -> Bool {
+        let visiblePaneIds = TerminalRestoreScheduler.order(
+            store.panes.keys.map(PaneId.init(uuid:)),
+            resolver: visibilityTierResolver
+        )
+        .filter { visibilityTierResolver.tier(for: $0) == .p0Visible }
+        .map(\.uuid)
+
+        for paneId in visiblePaneIds {
+            guard let pane = store.pane(paneId) else { continue }
+            guard store.tabContaining(paneId: pane.parentPaneId ?? pane.id)?.id == activeTab.id else {
+                continue
+            }
+            if viewRegistry.view(for: paneId) == nil {
+                return true
+            }
+        }
+        return false
     }
 
     private func restoreDrawerPanes(

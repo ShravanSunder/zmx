@@ -9,26 +9,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Shared Services (created once at launch)
     // Module-internal to support focused same-type AppDelegate extensions.
     var store: WorkspaceStore!
-    private var workspaceRepoCache: WorkspaceRepoCache!
-    private var workspaceUIStore: WorkspaceUIStore!
-    private var workspaceCacheCoordinator: WorkspaceCacheCoordinator!
+    var workspaceRepoCache: WorkspaceRepoCache!
+    var workspaceUIStore: WorkspaceUIStore!
+    var workspaceCacheCoordinator: WorkspaceCacheCoordinator!
     var watchedFolderCommands: (any WatchedFolderCommandHandling)!
-    private var viewRegistry: ViewRegistry!
+    var viewRegistry: ViewRegistry!
     var paneCoordinator: PaneCoordinator!
     private var executor: ActionExecutor!
     private var tabBarAdapter: TabBarAdapter!
     private var runtime: SessionRuntime!
     var appLifecycleStore: AppLifecycleStore!
-    private var windowLifecycleStore: WindowLifecycleStore!
+    var windowLifecycleStore: WindowLifecycleStore!
     var applicationLifecycleMonitor: ApplicationLifecycleMonitor!
     // MARK: - Command Bar
     private(set) var commandBarController: CommandBarPanelController!
     // MARK: - OAuth
     private var oauthService: OAuthService!
     private var filesystemPipelineBootTask: Task<Void, Never>?
-    private var launchRestoreObservationTask: Task<Void, Never>?
-    private var windowRestoreBridge: WindowRestoreBridge?
-    private let launchRestoreObservationState = AppDelegateLaunchRestoreObservationState()
+    var launchRestoreObservationTask: Task<Void, Never>?
+    var windowRestoreBridge: WindowRestoreBridge?
+    let launchRestoreObservationState = AppDelegateLaunchRestoreObservationState()
 
     private func recordBootStep(_ step: WorkspaceBootStep) {
         RestoreTrace.log("workspace.boot.step=\(step.rawValue)")
@@ -78,59 +78,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RestoreTrace.log(
             "store.restore complete tabs=\(store.tabs.count) panes=\(store.panes.count) activeTab=\(store.activeTabId?.uuidString ?? "nil")"
         )
-    }
-
-    private func observeLaunchRestoreReadiness() {
-        let bridge = WindowRestoreBridge(windowLifecycleStore: windowLifecycleStore)
-        windowRestoreBridge = bridge
-        launchRestoreObservationState.prepareForObservation()
-        launchRestoreObservationTask?.cancel()
-        launchRestoreObservationState.installDiagnosticTask(
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    try await Task.sleep(for: .seconds(10))
-                } catch is CancellationError {
-                    return
-                } catch {
-                    appLogger.warning("Unexpected error in launch restore diagnostic timer: \(error)")
-                    return
-                }
-                guard !self.launchRestoreObservationState.didComplete else { return }
-                appLogger.error(
-                    "Launch restore timed out — isSettled=\(self.windowLifecycleStore.isLaunchLayoutSettled, privacy: .public) bounds=\(NSStringFromRect(self.windowLifecycleStore.terminalContainerBounds), privacy: .public)"
-                )
-            }
-        )
-        launchRestoreObservationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for await bounds in bridge.stream {
-                guard !Task.isCancelled else { break }
-                let restoreBounds =
-                    bounds.isEmpty
-                    ? self.windowLifecycleStore.terminalContainerBounds
-                    : bounds
-                guard !restoreBounds.isEmpty else {
-                    RestoreTrace.log("launchRestore skipped reason=emptyBounds")
-                    appLogger.error(
-                        "Launch restore readiness emitted empty bounds — storeBounds=\(NSStringFromRect(self.windowLifecycleStore.terminalContainerBounds), privacy: .public)"
-                    )
-                    self.launchRestoreObservationState.complete()
-                    break
-                }
-                RestoreTrace.log(
-                    "launchRestore triggered bounds=\(NSStringFromRect(restoreBounds)) windowFrame=\(NSStringFromRect(mainWindowController?.window?.frame ?? .zero)) contentRect=\(NSStringFromRect(mainWindowController?.window?.contentLayoutRect ?? .zero))"
-                )
-                await self.paneCoordinator.restoreAllViews(in: restoreBounds)
-                self.mainWindowController?.syncVisibleTerminalGeometry(reason: "postLaunchRestore")
-                self.launchRestoreObservationState.complete()
-                RestoreTrace.log("launchRestore end registeredViews=\(self.viewRegistry.registeredPaneIds.count)")
-                break
-            }
-            if !self.launchRestoreObservationState.didComplete {
-                self.launchRestoreObservationState.cancelDiagnostics()
-            }
-        }
     }
 
     private func bootLoadCacheStore(persistor: WorkspacePersistor) {

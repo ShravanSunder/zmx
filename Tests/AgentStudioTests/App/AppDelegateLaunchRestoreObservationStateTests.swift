@@ -35,4 +35,13 @@ struct AppDelegateLaunchRestoreObservationStateTests {
         #expect(state.didComplete == false)
         #expect(diagnosticTask.isCancelled == true)
     }
+
+    @Test("complete is idempotent")
+    func complete_isIdempotent() async {
+        let state = AppDelegateLaunchRestoreObservationState()
+        state.complete()
+        state.complete()
+
+        #expect(state.didComplete == true)
+    }
 }
