@@ -362,13 +362,22 @@ enum AppStyle {
     /// Standard gradient width for text fade masks (clear ↔ opaque transition).
     static let maskFadeWidth: CGFloat = 14
 
+    // MARK: - Chrome Background
+
+    /// Dark background for pane gap dividers.
+    /// Darker than the system window background to visually separate panes.
+    static let chromeBackground = Color(nsColor: NSColor(white: 0.09, alpha: 1.0))
+
+    /// Titlebar background color. Slightly darker than the macOS system default.
+    static let titlebarBackground = NSColor(white: 0.12, alpha: 1.0)
+
     // MARK: - Layout
 
     /// Tab bar height in points.
     static let tabBarHeight: CGFloat = 36
 
     /// Inter-pane gap (padding around each pane leaf).
-    static let paneGap: CGFloat = 2
+    static let paneGap: CGFloat = 1
 
     /// Minimum pane size enforced while dragging split dividers.
     static let splitMinimumPaneSize: CGFloat = 10
