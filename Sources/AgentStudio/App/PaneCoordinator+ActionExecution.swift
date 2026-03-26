@@ -644,9 +644,9 @@ extension PaneCoordinator {
                 Self.logger.warning("repair \(String(describing: repairAction)): pane not in store")
                 return
             }
-            if viewRegistry.terminalStatusPlaceholderView(for: paneId) != nil {
-                viewRegistry.unregister(paneId)
-            } else if viewRegistry.view(for: paneId) != nil {
+            if let existingView = viewRegistry.view(for: paneId),
+                !(existingView is TerminalStatusPlaceholderView)
+            {
                 Self.logger.info("repair createMissingView: pane \(paneId) already has a view")
                 return
             }
