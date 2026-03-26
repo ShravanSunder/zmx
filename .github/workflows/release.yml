@@ -247,7 +247,12 @@ jobs:
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_NOTARY_PASSWORD" \
-            --output-format json | jq -r '.id')
+            --output-format json | jq -r '.id // empty')
+
+          if [ -z "$SUBMISSION_ID" ] || [ "$SUBMISSION_ID" = "null" ]; then
+            echo "::error::Failed to extract submission ID from notarization response"
+            exit 1
+          fi
 
           echo "submission_id=$SUBMISSION_ID" >> "$GITHUB_OUTPUT"
           echo "Submission ID: $SUBMISSION_ID"
@@ -349,14 +354,26 @@ jobs:
           # Strip 'v' prefix for cask version
           CASK_VERSION="${VERSION#v}"
 
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/ShravanSunder/homebrew-agentstudio.git" /tmp/homebrew-tap
+          # Use credential helper to avoid PAT in git clone URL
+          git config --global credential.helper store
+          echo "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com" > ~/.git-credentials
+
+          git clone https://github.com/ShravanSunder/homebrew-agentstudio.git /tmp/homebrew-tap
           cd /tmp/homebrew-tap
 
-          sed -i '' "s/version \".*\"/version \"${CASK_VERSION}\"/" Casks/agent-studio.rb
-          sed -i '' "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Casks/agent-studio.rb
+          # Line-anchored sed to avoid matching comments or other fields
+          sed -i '' 's/^  version ".*"$/  version "'"${CASK_VERSION}"'"/' Casks/agent-studio.rb
+          sed -i '' 's/^  sha256 ".*"$/  sha256 "'"${SHA256}"'"/' Casks/agent-studio.rb
+
+          # Validate the update worked
+          grep -q "version \"${CASK_VERSION}\"" Casks/agent-studio.rb || { echo "::error::Failed to update cask version"; exit 1; }
+          grep -q "sha256 \"${SHA256}\"" Casks/agent-studio.rb || { echo "::error::Failed to update cask sha256"; exit 1; }
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/agent-studio.rb
           git commit -m "Update agent-studio to v${CASK_VERSION}"
           git push origin main
+
+          # Clean up credentials
+          rm -f ~/.git-credentials
