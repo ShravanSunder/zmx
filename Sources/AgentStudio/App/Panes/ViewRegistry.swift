@@ -33,6 +33,11 @@ final class ViewRegistry {
         views[paneId] as? AgentStudioTerminalView
     }
 
+    /// Get the terminal status placeholder view for a pane, if it is present.
+    func terminalStatusPlaceholderView(for paneId: UUID) -> TerminalStatusPlaceholderView? {
+        views[paneId] as? TerminalStatusPlaceholderView
+    }
+
     /// Get the webview for a pane, if it is a webview.
     func webviewView(for paneId: UUID) -> WebviewPaneView? {
         views[paneId] as? WebviewPaneView

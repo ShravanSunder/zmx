@@ -67,6 +67,7 @@ extension PaneCoordinator {
             position: .after
         )
         store.setActivePane(pane.id, inTab: activeTabId)
+        registerTerminalPlaceholderIfNeeded(for: pane, mode: .preparing)
         restoreViewsForActiveTabIfNeeded()
 
         Self.logger.info("Opened worktree '\(worktree.name)' in split pane")
@@ -110,6 +111,7 @@ extension PaneCoordinator {
         let tab = Tab(paneId: pane.id)
         store.appendTab(tab)
         store.setActiveTab(tab.id)
+        registerTerminalPlaceholderIfNeeded(for: pane, mode: .preparing)
         restoreViewsForActiveTabIfNeeded()
 
         Self.logger.info("Opened floating terminal pane \(pane.id)")
@@ -275,7 +277,8 @@ extension PaneCoordinator {
                 direction: layoutDirection,
                 position: position
             )
-            if viewRegistry.view(for: paneId) == nil, store.pane(paneId) != nil {
+            if viewRegistry.view(for: paneId) == nil, let pane = store.pane(paneId) {
+                registerTerminalPlaceholderIfNeeded(for: pane, mode: .preparing)
                 restoreViewsForActiveTabIfNeeded()
             }
 
@@ -285,7 +288,8 @@ extension PaneCoordinator {
             store.purgeOrphanedPane(paneId)
 
         case .addDrawerPane(let parentPaneId):
-            if store.addDrawerPane(to: parentPaneId) != nil {
+            if let drawerPane = store.addDrawerPane(to: parentPaneId) {
+                registerTerminalPlaceholderIfNeeded(for: drawerPane, mode: .preparing)
                 restoreViewsForActiveTabIfNeeded()
             }
 
@@ -389,6 +393,7 @@ extension PaneCoordinator {
         let tab = Tab(paneId: pane.id)
         store.appendTab(tab)
         store.setActiveTab(tab.id)
+        registerTerminalPlaceholderIfNeeded(for: pane, mode: .preparing)
         restoreViewsForActiveTabIfNeeded()
 
         Self.logger.info("Opened terminal for worktree: \(worktree.name)")
@@ -539,6 +544,7 @@ extension PaneCoordinator {
                     pane.id, inTab: targetTabId, at: targetPaneId,
                     direction: layoutDirection, position: position
                 )
+                registerTerminalPlaceholderIfNeeded(for: pane, mode: .preparing)
                 restoreViewsForActiveTabIfNeeded()
                 return
             }
@@ -553,6 +559,7 @@ extension PaneCoordinator {
                 pane.id, inTab: targetTabId, at: targetPaneId,
                 direction: layoutDirection, position: position
             )
+            registerTerminalPlaceholderIfNeeded(for: pane, mode: .preparing)
             restoreViewsForActiveTabIfNeeded()
         }
     }
@@ -593,6 +600,7 @@ extension PaneCoordinator {
             return
         }
 
+        registerTerminalPlaceholderIfNeeded(for: drawerPane, mode: .preparing)
         restoreViewsForActiveTabIfNeeded()
     }
 
@@ -634,7 +642,9 @@ extension PaneCoordinator {
                 Self.logger.warning("repair \(String(describing: repairAction)): pane not in store")
                 return
             }
-            guard viewRegistry.view(for: paneId) == nil else {
+            if let existingView = viewRegistry.view(for: paneId),
+                !(existingView is TerminalStatusPlaceholderView)
+            {
                 Self.logger.info("repair createMissingView: pane \(paneId) already has a view")
                 return
             }
