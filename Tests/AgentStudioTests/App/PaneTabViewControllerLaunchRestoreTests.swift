@@ -116,8 +116,10 @@ struct PaneTabViewControllerLaunchRestoreTests {
         harness.store.appendTab(tab)
         harness.store.setActiveTab(tab.id)
 
+        let containerWidth: CGFloat = 1000
+        let containerHeight: CGFloat = 600
         harness.windowLifecycleStore.recordTerminalContainerBounds(
-            CGRect(x: 0, y: 0, width: 1000, height: 600)
+            CGRect(x: 0, y: 0, width: containerWidth, height: containerHeight)
         )
 
         await harness.coordinator.restoreAllViews(
@@ -125,7 +127,10 @@ struct PaneTabViewControllerLaunchRestoreTests {
         )
 
         let config = try #require(harness.surfaceManager.createdConfigsByPaneId[pane.id])
-        #expect(config.initialFrame == CGRect(x: 2, y: 2, width: 996, height: 596))
+        let gap = AppStyle.paneGap
+        #expect(
+            config.initialFrame
+                == CGRect(x: gap, y: gap, width: containerWidth - gap * 2, height: containerHeight - gap * 2))
     }
 }
 
