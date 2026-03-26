@@ -399,7 +399,6 @@ final class PaneCoordinator {
         case .cwdChanged(let cwdPath):
             store.updatePaneCWD(sourcePaneUUID, cwd: URL(fileURLWithPath: cwdPath))
         case .commandFinished(let exitCode, _):
-            AppEventBus.post(.terminalProcessTerminated(paneId: sourcePaneUUID, exitCode: Int32(exitCode)))
             Self.logger.debug(
                 "Terminal commandFinished event received for pane \(sourcePaneUUID.uuidString, privacy: .public) exitCode=\(exitCode, privacy: .public)"
             )

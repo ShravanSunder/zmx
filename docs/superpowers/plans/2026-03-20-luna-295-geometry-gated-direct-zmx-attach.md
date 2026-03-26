@@ -211,8 +211,8 @@ The required boundary is:
 
 - **Never-live pane, waiting for geometry:** the pane already exists in canonical layout, but trusted geometry is not available yet. Show a truthful full-pane `Preparing terminal...` state and retry creation when trusted geometry arrives.
 - **Never-live pane, startup failed:** trusted geometry existed or creation was attempted, but the pane never became live. Keep the pane slot visible and show a failure placeholder instead of silently collapsing the split or revealing a fallback shell.
-- **Live pane, normal exit:** if a terminal was successfully live and later exits normally (`exitCode == 0`), close that pane. If it was the last pane in the tab, close the tab.
-- **Live pane, abnormal exit/crash:** if a terminal was successfully live and later exits abnormally (`exitCode != 0`) or the surface health transitions to a crashed/dead state, keep the pane visible and show crash/error UI. Do not convert a previously-live pane into a startup placeholder.
+- **Live pane, child-process exit:** if a terminal was successfully live and Ghostty requests the surface close because the terminal child process has exited, close that pane. If it was the last pane in the tab, close the tab.
+- **Live pane, surface failure:** if a terminal was successfully live and the surface health transitions to an unhealthy/dead/crashed state without entering the never-live startup-failure path, keep the pane visible and show crash/error UI. Do not convert a previously-live pane into a startup placeholder.
 
 For this slice, “successfully became live” means:
 
@@ -223,7 +223,7 @@ Implementation guidance:
 
 - The preparing/failure states may be represented by a real placeholder `PaneView` so `ViewRegistry.renderTree(...)` preserves the layout structure.
 - The crash state should reuse the existing terminal crash/error presentation rather than the never-live placeholder path.
-- Normal exit behavior must remain Ghostty-like: a user typing `exit` should remove the pane, not reveal a placeholder.
+- Child-process exit behavior must remain Ghostty-like: a user typing `exit` should remove the pane, not reveal a placeholder.
 
 ## Non-Goals
 

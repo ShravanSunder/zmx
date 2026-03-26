@@ -361,6 +361,25 @@ struct PaneCoordinatorHardeningTests {
         #expect(placeholder?.mode == .preparing)
     }
 
+    @Test("repair createMissingView retries from failed placeholder instead of treating it as an existing live view")
+    func repairCreateMissingView_failedPlaceholderRetriesCreation() {
+        let harness = makeHarness()
+        defer { try? FileManager.default.removeItem(at: harness.tempDir) }
+
+        let (repo, worktree) = makeRepoAndWorktree(harness.store, root: harness.tempDir)
+        let pane = makeWorktreePane(harness.store, repo: repo, worktree: worktree, title: "Retry")
+        let tab = Tab(paneId: pane.id)
+        harness.store.appendTab(tab)
+        harness.coordinator.windowLifecycleStore.recordTerminalContainerBounds(trustedBounds)
+        _ = harness.coordinator.registerTerminalPlaceholderIfNeeded(for: pane, mode: .failedToStart)
+
+        harness.coordinator.execute(.repair(.createMissingView(paneId: pane.id)))
+
+        #expect(harness.surfaceManager.createSurfaceCallCount == 1)
+        let placeholder = harness.viewRegistry.terminalStatusPlaceholderView(for: pane.id)
+        #expect(placeholder?.mode == .failedToStart)
+    }
+
     @Test("undoTabClose keeps tab only with successfully restored panes")
     func undoTabClose_partialRestore_removesFailedPanes() {
         let harness = makeHarness()

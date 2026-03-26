@@ -251,7 +251,7 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         RestoreTrace.log(
             "AgentStudioTerminalView.handleSurfaceClose pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") processAlive=\(processAlive)"
         )
-        handleProcessTerminated(exitCode: nil)
+        handleProcessTerminated()
     }
 
     private func beginRestorePresentationIfNeeded() {
@@ -317,35 +317,15 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
 
     // MARK: - Process Management
 
-    /// `exitCode == nil` means the process terminated without a reliable numeric
-    /// code (e.g. surface-level close callback / force-destroy path).
-    func handleProcessTerminated(exitCode: Int32?) {
+    func handleProcessTerminated() {
         isProcessRunning = false
-        AppEventBus.post(
-            .terminalProcessTerminated(
-                paneId: paneId,
-                exitCode: exitCode
-            )
-        )
-    }
-
-    func handleCommandFinished(exitCode: Int32) {
-        isProcessRunning = false
-        startupPresentationTask?.cancel()
-        startupPresentationTask = nil
-        startupPresentationActive = false
-        startupOverlay?.hide()
-        showErrorOverlay(health: .processExited(exitCode: exitCode))
-    }
-
-    var isShowingErrorOverlayForTesting: Bool {
-        !(errorOverlay?.isHidden ?? true)
+        AppEventBus.post(.terminalProcessTerminated(paneId: paneId))
     }
 
     func requestClose() {
         guard let surfaceId else { return }
         SurfaceManager.shared.detach(surfaceId, reason: .close)
-        handleProcessTerminated(exitCode: nil)
+        handleProcessTerminated()
     }
 
     func terminateProcess() {
