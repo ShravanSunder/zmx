@@ -329,6 +329,19 @@ final class AgentStudioTerminalView: PaneView, SurfaceHealthDelegate {
         )
     }
 
+    func handleCommandFinished(exitCode: Int32) {
+        isProcessRunning = false
+        startupPresentationTask?.cancel()
+        startupPresentationTask = nil
+        startupPresentationActive = false
+        startupOverlay?.hide()
+        showErrorOverlay(health: .processExited(exitCode: exitCode))
+    }
+
+    var isShowingErrorOverlayForTesting: Bool {
+        !(errorOverlay?.isHidden ?? true)
+    }
+
     func requestClose() {
         guard let surfaceId else { return }
         SurfaceManager.shared.detach(surfaceId, reason: .close)

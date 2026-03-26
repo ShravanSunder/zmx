@@ -409,11 +409,12 @@ final class ActionExecutorTests {
         // Act
         let pane = executor.openTerminal(for: worktree, in: repo)
 
-        // Assert — the pane exists in canonical state, but no view has been created yet.
+        // Assert — the pane exists in canonical state and shows a preparing placeholder
+        // until trusted geometry arrives.
         #expect(pane != nil)
         #expect(store.tabs.count == 1)
         #expect(store.panes.count == 1)
-        #expect(pane.flatMap { viewRegistry.view(for: $0.id) } == nil)
+        #expect(pane.flatMap { viewRegistry.view(for: $0.id) } is TerminalStatusPlaceholderView)
     }
 
     @Test

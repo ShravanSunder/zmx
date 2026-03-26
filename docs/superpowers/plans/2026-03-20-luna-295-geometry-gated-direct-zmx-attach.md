@@ -203,6 +203,28 @@ Implementation requirements:
 - keep the current startup grace at `100ms` for this slice; once geometry-first creation is stable, a follow-up can reduce it to `50ms`
 - if future Ghostty integration exposes a stronger first-render/ready signal, it can replace this heuristic in a follow-up slice
 
+## Pane Lifecycle Boundary
+
+This slice must distinguish panes that never successfully became live from panes that were live and later exited.
+
+The required boundary is:
+
+- **Never-live pane, waiting for geometry:** the pane already exists in canonical layout, but trusted geometry is not available yet. Show a truthful full-pane `Preparing terminal...` state and retry creation when trusted geometry arrives.
+- **Never-live pane, startup failed:** trusted geometry existed or creation was attempted, but the pane never became live. Keep the pane slot visible and show a failure placeholder instead of silently collapsing the split or revealing a fallback shell.
+- **Live pane, normal exit:** if a terminal was successfully live and later exits normally (`exitCode == 0`), close that pane. If it was the last pane in the tab, close the tab.
+- **Live pane, abnormal exit/crash:** if a terminal was successfully live and later exits abnormally (`exitCode != 0`) or the surface health transitions to a crashed/dead state, keep the pane visible and show crash/error UI. Do not convert a previously-live pane into a startup placeholder.
+
+For this slice, “successfully became live” means:
+
+- a Ghostty surface was created with trusted geometry, and
+- the startup grace window completed without an early process/surface failure signal.
+
+Implementation guidance:
+
+- The preparing/failure states may be represented by a real placeholder `PaneView` so `ViewRegistry.renderTree(...)` preserves the layout structure.
+- The crash state should reuse the existing terminal crash/error presentation rather than the never-live placeholder path.
+- Normal exit behavior must remain Ghostty-like: a user typing `exit` should remove the pane, not reveal a placeholder.
+
 ## Non-Goals
 
 The following are explicitly out of scope for this slice:

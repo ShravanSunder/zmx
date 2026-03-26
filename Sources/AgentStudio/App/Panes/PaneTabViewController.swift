@@ -244,10 +244,10 @@ class PaneTabViewController: NSViewController, CommandHandler {
                 for await event in stream {
                     guard !Task.isCancelled else { break }
                     switch event {
-                    case .terminalProcessTerminated(let paneId, _):
+                    case .terminalProcessTerminated(let paneId, let exitCode):
                         Task { @MainActor [weak self] in
                             await Task.yield()
-                            self?.handleTerminalProcessTerminated(paneId: paneId)
+                            self?.handleTerminalProcessTerminated(paneId: paneId, exitCode: exitCode)
                         }
                     default:
                         continue
@@ -741,7 +741,18 @@ class PaneTabViewController: NSViewController, CommandHandler {
 
     // MARK: - Process Termination
 
-    func handleTerminalProcessTerminated(paneId: UUID) {
+    func handleTerminalProcessTerminated(paneId: UUID, exitCode: Int32? = nil) {
+        if let exitCode, exitCode != 0 {
+            if let terminalView = viewRegistry.terminalView(for: paneId) {
+                terminalView.handleCommandFinished(exitCode: exitCode)
+            } else {
+                RestoreTrace.log(
+                    "PaneTabViewController.handleTerminalProcessTerminated crashNoop pane=\(paneId) exitCode=\(exitCode)"
+                )
+            }
+            return
+        }
+
         if let tab = store.tabs.first(where: { $0.paneIds.contains(paneId) }) {
             if tab.isSplit {
                 dispatchAction(.closePane(tabId: tab.id, paneId: paneId))

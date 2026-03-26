@@ -187,6 +187,34 @@ struct PaneTabViewControllerCommandTests {
         #expect(harness.store.pane(survivingPane.id) != nil)
     }
 
+    @Test("non-zero terminal exit keeps pane and shows crash state")
+    func handleTerminalProcessTerminated_nonZeroExit_keepsPaneVisible() {
+        let harness = makeHarness()
+        defer { try? FileManager.default.removeItem(at: harness.tempDir) }
+
+        let pane = harness.store.createPane(
+            source: .floating(workingDirectory: harness.tempDir, title: "Crash"),
+            title: "Crash",
+            provider: .zmx
+        )
+        let tab = Tab(paneId: pane.id)
+        harness.store.appendTab(tab)
+        harness.store.setActiveTab(tab.id)
+
+        let terminalView = AgentStudioTerminalView(
+            restoredSurfaceId: UUID(),
+            paneId: pane.id,
+            title: "Crash"
+        )
+        harness.coordinator.viewRegistry.register(terminalView, for: pane.id)
+
+        harness.controller.handleTerminalProcessTerminated(paneId: pane.id, exitCode: 1)
+
+        #expect(harness.store.tab(tab.id) != nil)
+        #expect(harness.store.pane(pane.id) != nil)
+        #expect(terminalView.isShowingErrorOverlayForTesting)
+    }
+
     @Test("command harness shares window lifecycle store across monitor and coordinator")
     func makeHarness_sharesWindowLifecycleStoreAcrossLifecycleBoundaries() {
         let harness = makeHarness()
