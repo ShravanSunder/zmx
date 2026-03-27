@@ -99,10 +99,12 @@ extension E2ESerializedTests {
 
         private func eventually(
             _ description: String,
-            maxTurns: Int = 300_000,
+            // High yield budget by design: we want scheduler-tolerant async
+            // convergence without using wall-clock sleeps in tests.
+            maxYields: Int = 300_000,
             condition: @escaping @MainActor () async -> Bool
         ) async {
-            for _ in 0..<maxTurns {
+            for _ in 0..<maxYields {
                 if await condition() {
                     return
                 }

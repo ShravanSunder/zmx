@@ -130,7 +130,7 @@ final class TerminalPaneMountView: NSView, PaneMountedContent, SurfaceHealthDele
     override func layout() {
         super.layout()
         guard let surface = ghosttySurface, bounds.size.width > 0, bounds.size.height > 0 else { return }
-        let currentSize = ghosttyMountView.bounds.size == .zero ? surface.bounds.size : ghosttyMountView.bounds.size
+        let currentSize = measuredSurfaceSize(for: surface)
         guard currentSize != lastReportedSurfaceSize else { return }
         lastReportedSurfaceSize = currentSize
         RestoreTrace.log(
@@ -143,14 +143,22 @@ final class TerminalPaneMountView: NSView, PaneMountedContent, SurfaceHealthDele
         guard let surface = ghosttySurface, window != nil else { return }
         guard bounds.size.width > 0, bounds.size.height > 0 else { return }
         layoutSubtreeIfNeeded()
-        let actualSurfaceSize =
-            ghosttyMountView.bounds.size == .zero ? surface.bounds.size : ghosttyMountView.bounds.size
+        let actualSurfaceSize = measuredSurfaceSize(for: surface)
         guard actualSurfaceSize.width > 0, actualSurfaceSize.height > 0 else { return }
         lastReportedSurfaceSize = .zero
         RestoreTrace.log(
             "TerminalPaneMountView.forceGeometrySync pane=\(paneId) surface=\(surfaceId?.uuidString ?? "nil") reason=\(reason) paneBounds=\(NSStringFromRect(bounds)) surfaceBounds=\(NSStringFromRect(surface.bounds)) surfaceMetrics={\(surface.metricsSnapshotDescription())}"
         )
         surface.sizeDidChange(actualSurfaceSize)
+    }
+
+    /// During the first layout tick after mount, AppKit can call through before
+    /// the constrained Ghostty mount view has published non-zero bounds. Falling
+    /// back to the surface's own frame keeps the initial geometry sync stable
+    /// without turning that transient timing window into a zero-size resize.
+    private func measuredSurfaceSize(for surface: Ghostty.SurfaceView) -> NSSize {
+        let mountSize = ghosttyMountView.bounds.size
+        return mountSize == .zero ? surface.bounds.size : mountSize
     }
 
     // MARK: - Surface Display
