@@ -654,12 +654,13 @@ const Daemon = struct {
             .ws_ypixel = 0,
         };
         _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
-        // Disable prompt_redraw before resize (same rationale as handleInit).
-        const saved_prompt_redraw = term.flags.shell_redraws_prompt;
-        term.flags.shell_redraws_prompt = .false;
-        defer term.flags.shell_redraws_prompt = saved_prompt_redraw;
-        try term.resize(self.alloc, resize.cols, resize.rows);
-        std.log.debug("resize rows={d} cols={d}", .{ resize.rows, resize.cols });
+        // EXPERIMENT: skip internal terminal resize during live operation.
+        // The internal terminal only needs correct dimensions at serialization
+        // time (handleInit), not during every live resize. Skipping here
+        // eliminates divergence between daemon and outer terminal state.
+        _ = self;
+        _ = term;
+        std.log.debug("resize rows={d} cols={d} internal_terminal_skipped=true", .{ resize.rows, resize.cols });
     }
 
     pub fn handleDetach(self: *Daemon, client: *Client, i: usize) void {
